@@ -1,4 +1,5 @@
-/* 百工·剪 全局样式：仅基础骨架，视觉取值走 fang 设计 token 变量。 */
+/* 百工·剪 全局样式：视觉取值一律 var(--fang-*) 设计 token，禁裸色值。 */
+/* 时间线面板样式自包含于 features/timeline（契约约定），此处只放跨面板公共件。 */
 
 html,
 body,
@@ -32,7 +33,82 @@ body {
   min-height: 0;
 }
 
-/* 顶栏 */
+/* —— DockPanel 内容区形态微调 ——
+   fang 的面板体默认按内容自适应；预览/素材池需要「工具区固定 + 内容区内部滚动」，
+   这里把这两个面板的体改为纵向 flex（只改自己名下面板，不碰 fang 源码）。 */
+.preview-panel > .fang-dock-panel__body,
+.media-bin-panel > .fang-dock-panel__body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* —— 通用按钮（token 化，供各面板共用） —— */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fang-space-1);
+  padding: var(--fang-space-1) var(--fang-space-3);
+  border: 1px solid var(--fang-color-border);
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-raised);
+  color: var(--fang-color-text);
+  font: var(--fang-font-size-sm)/1.4 var(--fang-font-family);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--fang-color-bg-overlay);
+  border-color: var(--fang-color-border-strong);
+}
+
+.btn:disabled {
+  color: var(--fang-color-text-muted);
+  cursor: default;
+}
+
+.btn--primary {
+  background: var(--fang-color-accent);
+  border-color: var(--fang-color-accent);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--fang-color-accent-hover);
+  border-color: var(--fang-color-accent-hover);
+}
+
+.btn--sm {
+  padding: 2px var(--fang-space-2);
+  font-size: var(--fang-font-size-xs);
+}
+
+/* 图标按钮：走带条等纯图标操作位 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--fang-radius-sm);
+  background: transparent;
+  color: var(--fang-color-text-secondary);
+  cursor: pointer;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--fang-color-hover);
+  color: var(--fang-color-text);
+}
+
+.icon-btn:disabled {
+  color: var(--fang-color-text-muted);
+  cursor: default;
+}
+
+/* —— 顶栏 —— */
 .top-bar {
   display: flex;
   align-items: center;
@@ -52,27 +128,272 @@ body {
   color: var(--fang-color-text-secondary);
 }
 
+.top-bar__seq {
+  font-family: var(--fang-font-mono);
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text-muted);
+}
+
 .top-bar__divider {
   width: 1px;
   height: 14px;
   background: var(--fang-color-border);
 }
 
-/* 占位面板正文 */
-.panel-placeholder {
-  margin: 0;
+.top-bar__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-3);
+  min-width: 0;
+}
+
+.top-bar__export-msg {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fang-font-size-xs);
   color: var(--fang-color-text-muted);
 }
 
-/* 预览占位舞台：16:9 居中 */
-.preview-stage {
+.top-bar__export-msg--error {
+  color: var(--fang-color-danger);
+}
+
+/* —— 素材池 —— */
+.media-bin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.media-bin__toolbar {
+  flex: none;
+  display: flex;
+  gap: var(--fang-space-2);
+}
+
+.media-bin__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-2);
+}
+
+.media-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-1);
+  padding: var(--fang-space-2);
+  border: 1px solid var(--fang-color-border);
+  border-radius: var(--fang-radius-md);
+  background: var(--fang-color-bg-raised);
+  cursor: default; /* 双击插入的落点，非按钮语义 */
+}
+
+.media-card:hover {
+  border-color: var(--fang-color-border-strong);
+}
+
+.media-card__thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 16 / 9;
-  max-height: 100%;
-  margin: 0 auto;
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-overlay);
+  color: var(--fang-color-text-muted);
+  overflow: hidden;
+}
+
+.media-card__img {
   width: 100%;
-  border: 1px dashed var(--fang-color-border);
-  border-radius: var(--fang-radius-md);
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-card__badge {
+  position: absolute;
+  top: var(--fang-space-1);
+  left: var(--fang-space-1);
+  padding: 1px var(--fang-space-2);
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-overlay);
+  color: var(--fang-color-text-secondary);
+  font-size: var(--fang-font-size-xs);
+  line-height: 1.5;
+}
+
+.media-card__thumb-note {
+  position: absolute;
+  bottom: var(--fang-space-1);
+  right: var(--fang-space-1);
+  padding: 1px var(--fang-space-1);
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-overlay);
+  color: var(--fang-color-warning);
+  font-size: var(--fang-font-size-xs);
+}
+
+.media-card__name {
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fang-space-2);
+  font-size: var(--fang-font-size-xs);
+  color: var(--fang-color-text-muted);
+}
+
+/* —— 节目预览器 —— */
+.preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.preview-stage-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* 舞台：只出容器，video 元素归 VideoPool（契约 DOM 约定）。
+   aspect-ratio 由组件按序列画幅内联注入；黑底即页面基底色，letterbox 由
+   池内元素的 object-fit:contain 完成。 */
+.preview-stage {
+  position: relative;
+  width: 100%;
+  max-height: 100%;
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg);
+  overflow: hidden;
+}
+
+.preview-stage__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fang-color-text-muted);
+  font-size: var(--fang-font-size-sm);
+  pointer-events: none;
+}
+
+/* —— 走带条 —— */
+.transport-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-1);
+  padding-top: var(--fang-space-2);
+  border-top: 1px solid var(--fang-color-border);
+}
+
+.transport-bar__play {
+  color: var(--fang-color-text);
+}
+
+.transport-bar__time {
+  margin-left: var(--fang-space-2);
+  font-family: var(--fang-font-mono);
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text);
+  white-space: nowrap;
+}
+
+.transport-bar__total {
+  color: var(--fang-color-text-muted);
+}
+
+.transport-bar__hint {
+  margin-left: auto;
+  font-size: var(--fang-font-size-xs);
+  color: var(--fang-color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* —— 效果控件（M1 只读） —— */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-2);
+}
+
+.inspector__head {
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-2);
+  min-width: 0;
+}
+
+.inspector__name {
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector__badge {
+  flex: none;
+  padding: 1px var(--fang-space-2);
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-overlay);
+  color: var(--fang-color-text-secondary);
+  font-size: var(--fang-font-size-xs);
+}
+
+.inspector__section {
+  margin: var(--fang-space-1) 0 0;
+  font-size: var(--fang-font-size-xs);
+  color: var(--fang-color-text-muted);
+}
+
+.inspector__rows {
+  display: grid;
+  grid-template-columns: minmax(76px, auto) minmax(0, 1fr);
+  gap: var(--fang-space-1) var(--fang-space-3);
+  margin: 0;
+}
+
+.inspector__rows dt {
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text-muted);
+}
+
+.inspector__rows dd {
+  margin: 0;
+  font-family: var(--fang-font-mono);
+  font-size: var(--fang-font-size-sm);
+  color: var(--fang-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 占位文案 —— */
+.panel-placeholder {
+  margin: 0;
+  color: var(--fang-color-text-muted);
 }

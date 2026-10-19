@@ -1,5 +1,8 @@
-// 百工·剪：M0 骨架阶段 Rust 侧保持轻量，仅注册官方插件，无自研命令（docs/开发方案.md 第 3 节）。
-// M1 起 ffprobe / ffmpeg 封装（sidecar 执行、进度事件）在本 crate 落地。
+// 百工·剪：官方插件 + M1 自研命令（ffprobe 探测 / ffmpeg 定位、抽帧、导出执行）。
+// 命令实现见 probe.rs、ffmpeg.rs；导出参数由前端 buildExportArgs 生成，这里只负责执行与进度事件。
+mod ffmpeg;
+mod probe;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -7,6 +10,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_log::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![
+            probe::probe_media,
+            ffmpeg::ffmpeg_info,
+            ffmpeg::extract_frame,
+            ffmpeg::run_export,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running jian");
 }

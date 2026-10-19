@@ -1,0 +1,320 @@
+/**
+ * 时间线面板样式：自包含于本目录（契约：禁改 src/styles/ 与 global.css）。
+ * 视觉取值全部走 fang 设计 token；视频/音频块分色由 accent / success 派生。
+ */
+
+/* DockPanel 面板体改为满铺编辑区：去内边距，滚动收敛到内部滚动容器 */
+.timeline-panel .fang-dock-panel__body {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* —— 工具条：加轨按钮 + 快捷键提示 —— */
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-2);
+  padding: var(--fang-space-2) var(--fang-space-3);
+  border-bottom: 1px solid var(--fang-color-border);
+  flex: none;
+  user-select: none;
+}
+
+.timeline-toolbar__hint {
+  margin-left: auto;
+  color: var(--fang-color-text-muted);
+  font-size: var(--fang-font-size-xs);
+  white-space: nowrap;
+}
+
+.timeline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fang-space-1);
+  padding: var(--fang-space-1) var(--fang-space-2);
+  border: 1px solid var(--fang-color-border);
+  border-radius: var(--fang-radius-sm);
+  background: var(--fang-color-bg-raised);
+  color: var(--fang-color-text-secondary);
+  font-family: var(--fang-font-family);
+  font-size: var(--fang-font-size-xs);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.timeline-btn:hover {
+  background: var(--fang-color-hover);
+  color: var(--fang-color-text);
+}
+
+.timeline-btn:active {
+  background: var(--fang-color-bg-overlay);
+  border-color: var(--fang-color-border-strong);
+}
+
+/* —— 主体：轨头列 + 滚动区 —— */
+.timeline-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.timeline-headers {
+  width: 148px;
+  flex: none;
+  overflow: hidden; /* 自身不滚，scrollTop 由滚动区同步驱动 */
+  border-right: 1px solid var(--fang-color-border);
+  background: var(--fang-color-bg-raised);
+}
+
+.timeline-corner {
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--fang-color-border);
+}
+
+.timeline-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.timeline-content {
+  position: relative;
+  min-width: 100%;
+}
+
+/* —— 轨头（box-sizing 与轨道行统一：行高含底边框，轨头列/轨道列逐行对齐） —— */
+.timeline-header {
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-2);
+  padding: 0 var(--fang-space-2);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--fang-color-border);
+}
+
+.timeline-header__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--fang-color-text-muted);
+}
+
+.timeline-header__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fang-font-size-sm);
+  font-weight: 600;
+  color: var(--fang-color-text);
+}
+
+.timeline-header.is-locked .timeline-header__name {
+  color: var(--fang-color-warning);
+}
+
+.timeline-header__actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.timeline-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--fang-radius-sm);
+  background: transparent;
+  color: var(--fang-color-text-muted);
+  cursor: pointer;
+}
+
+.timeline-icon-btn:hover {
+  background: var(--fang-color-hover);
+  color: var(--fang-color-text);
+}
+
+.timeline-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* 静音 / 锁定激活态：警示色点亮图标 */
+.timeline-icon-btn.is-on {
+  color: var(--fang-color-warning);
+}
+
+/* —— 刻度尺 —— */
+.timeline-ruler {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-sizing: border-box;
+  background: var(--fang-color-bg-raised);
+  border-bottom: 1px solid var(--fang-color-border);
+  cursor: ew-resize;
+  user-select: none;
+  overflow: hidden;
+}
+
+.timeline-ruler__tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--fang-color-border-strong);
+}
+
+.timeline-ruler__tick--minor {
+  bottom: auto;
+  height: 9px;
+  background: var(--fang-color-border);
+}
+
+.timeline-ruler__label {
+  position: absolute;
+  left: 3px;
+  top: 10px;
+  font-family: var(--fang-font-mono);
+  font-size: var(--fang-font-size-xs);
+  line-height: 1;
+  color: var(--fang-color-text-secondary);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* —— 轨道 —— */
+.timeline-lane {
+  position: relative;
+  box-sizing: border-box;
+  background: var(--fang-color-bg);
+}
+
+.timeline-lane[data-kind="audio"] {
+  background: var(--fang-color-bg-raised);
+}
+
+/* 锁定轨：斜纹罩层示意只读（罩层不拦截指针，块自身拒编辑） */
+.timeline-lane[data-locked="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 7px,
+    color-mix(in srgb, var(--fang-color-text-muted) 12%, transparent) 7px 14px
+  );
+}
+
+/* —— 剪辑块 —— */
+.timeline-clip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--fang-space-1) 0 calc(var(--fang-space-1) + 3px);
+  border-radius: var(--fang-radius-sm);
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+}
+
+.timeline-clip.is-dragging {
+  cursor: grabbing;
+  z-index: 5;
+  opacity: 0.92;
+}
+
+.timeline-clip.is-locked {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+/* 视频 / 音频分色：蓝 / 绿由 accent / success 派生 */
+.timeline-clip--video {
+  background: color-mix(in srgb, var(--fang-color-accent) 24%, var(--fang-color-bg-overlay));
+  border: 1px solid color-mix(in srgb, var(--fang-color-accent) 55%, transparent);
+}
+
+.timeline-clip--audio {
+  background: color-mix(in srgb, var(--fang-color-success) 20%, var(--fang-color-bg-overlay));
+  border: 1px solid color-mix(in srgb, var(--fang-color-success) 50%, transparent);
+}
+
+.timeline-clip__bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  flex: none;
+}
+
+.timeline-clip--video .timeline-clip__bar {
+  background: var(--fang-color-accent);
+}
+
+.timeline-clip--audio .timeline-clip__bar {
+  background: var(--fang-color-success);
+}
+
+.timeline-clip__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fang-font-size-xs);
+  color: var(--fang-color-text);
+}
+
+/* 选中：selected token 打底 + accent 描边（左侧色条保留类型信息） */
+.timeline-clip.is-selected {
+  background: var(--fang-color-selected);
+  border-color: var(--fang-color-accent);
+  box-shadow: 0 0 0 1px var(--fang-color-accent);
+}
+
+/* —— 播放头：竖线 + 顶部手柄，位移由命令式订阅直写 transform —— */
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  z-index: 3;
+  background: var(--fang-color-accent);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.timeline-playhead__hit {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 13px;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.timeline-playhead__hit::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 0;
+  width: 11px;
+  height: 14px;
+  background: var(--fang-color-accent);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}

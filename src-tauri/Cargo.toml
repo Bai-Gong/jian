@@ -24,6 +24,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-log = "2"
+# 命令返回结构与 ffprobe JSON 解析用（M1 施工契约 §1）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
