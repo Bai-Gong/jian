@@ -31,7 +31,10 @@ jobs:
         with:
           repository: Bai-Gong/fang
           ref: main
-          path: ../fang
+          path: fang
+      # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
+      - name: fang 挪到兄弟目录
+        run: mv fang ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
