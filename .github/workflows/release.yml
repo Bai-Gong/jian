@@ -19,10 +19,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # fang 兄弟仓库检出（原因见 ci.yml 同名步骤注释）
+      - name: 检出 fang（alias 联调的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/fang
+          ref: main
+          path: ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ../fang/package-lock.json
+      - name: 安装 fang 依赖
+        run: npm ci --prefix ../fang
       - name: 安装依赖并构建
         run: |
           npm ci
@@ -52,10 +64,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # fang 兄弟仓库检出：tauri build 的 beforeBuildCommand 会跑 npm run build（tsc 需 ../fang）
+      - name: 检出 fang（alias 联调的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/fang
+          ref: main
+          path: ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ../fang/package-lock.json
+      - name: 安装 fang 依赖
+        run: npm ci --prefix ../fang
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
