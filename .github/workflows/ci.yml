@@ -23,10 +23,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # fang 走 alias 联调轨（vite alias + tsconfig paths 指向 ../fang/src，开发方案 3.6），
+      # runner 只有本仓库，须把 fang 检出为兄弟目录，否则 tsc 报 Cannot find module '@baigong/fang'。
+      # 仓库私有化或 fang 上 registry 后此步骤移除（开发方案推迟项）。
+      - name: 检出 fang（alias 联调的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/fang
+          ref: main
+          path: ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            ../fang/package-lock.json
+      # fang 源码里的 import "react" 从 fang 自己的 node_modules 向上解析，裸检出会 TS2307
+      - name: 安装 fang 依赖
+        run: npm ci --prefix ../fang
       - name: 安装依赖并构建
         run: |
           npm ci
