@@ -33,9 +33,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            ../fang/package-lock.json
       - name: 安装 fang 依赖
         run: npm ci --prefix ../fang
       - name: 安装依赖并构建
@@ -81,9 +78,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            ../fang/package-lock.json
       - name: 安装 fang 依赖
         run: npm ci --prefix ../fang
       - uses: dtolnay/rust-toolchain@stable

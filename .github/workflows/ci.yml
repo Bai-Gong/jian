@@ -39,9 +39,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            ../fang/package-lock.json
       # fang 源码里的 import "react" 从 fang 自己的 node_modules 向上解析，裸检出会 TS2307
       - name: 安装 fang 依赖
         run: npm ci --prefix ../fang
