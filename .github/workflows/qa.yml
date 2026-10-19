@@ -25,24 +25,14 @@ jobs:
         with:
           repository: Bai-Gong/fang
           ref: main
-<<<<<<< HEAD
-          path: ../fang
-=======
           path: fang
       # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
       - name: fang 挪到兄弟目录
         run: mv fang ../fang
->>>>>>> develop
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-<<<<<<< HEAD
-          cache-dependency-path: |
-            package-lock.json
-            ../fang/package-lock.json
-=======
->>>>>>> develop
       - name: 安装 fang 依赖
         run: npm ci --prefix ../fang
       - name: 安装依赖并构建
@@ -80,24 +70,14 @@ jobs:
         with:
           repository: Bai-Gong/fang
           ref: main
-<<<<<<< HEAD
-          path: ../fang
-=======
           path: fang
       # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
       - name: fang 挪到兄弟目录
         run: mv fang ../fang
->>>>>>> develop
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-<<<<<<< HEAD
-          cache-dependency-path: |
-            package-lock.json
-            ../fang/package-lock.json
-=======
->>>>>>> develop
       - name: 安装 fang 依赖
         run: npm ci --prefix ../fang
       - uses: dtolnay/rust-toolchain@stable
