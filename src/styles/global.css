@@ -1,0 +1,78 @@
+/* 百工·剪 全局样式：仅基础骨架，视觉取值走 fang 设计 token 变量。 */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--fang-font-family);
+  font-size: var(--fang-font-size-md);
+  color: var(--fang-color-text);
+  background: var(--fang-color-bg);
+  overflow: hidden; /* 桌面应用形态：页面自身不滚动，滚动收敛在各面板内 */
+}
+
+/* 外壳：顶栏 + 停靠区 纵向铺满 */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 中央列：预览器在上（弹性）、时间线在下（定高起步） */
+.app-shell__center {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fang-space-3);
+  height: 100%;
+  min-height: 0;
+}
+
+/* 顶栏 */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--fang-space-3);
+  padding: var(--fang-space-2) var(--fang-space-4);
+  border-bottom: 1px solid var(--fang-color-border);
+  background: var(--fang-color-bg-raised);
+  user-select: none;
+  flex: none;
+}
+
+.top-bar__app {
+  font-weight: 600;
+}
+
+.top-bar__project {
+  color: var(--fang-color-text-secondary);
+}
+
+.top-bar__divider {
+  width: 1px;
+  height: 14px;
+  background: var(--fang-color-border);
+}
+
+/* 占位面板正文 */
+.panel-placeholder {
+  margin: 0;
+  color: var(--fang-color-text-muted);
+}
+
+/* 预览占位舞台：16:9 居中 */
+.preview-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  max-height: 100%;
+  margin: 0 auto;
+  width: 100%;
+  border: 1px dashed var(--fang-color-border);
+  border-radius: var(--fang-radius-md);
+}
