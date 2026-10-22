@@ -38,6 +38,23 @@ export function zoomPxPerUs(current: number, deltaY: number): number {
 
 // ===== 刻度尺 =====
 
+/** 空序列（无任何块）的固定内容时长：右侧只画到这里。 */
+export const CONTENT_EMPTY_US = 30_000_000;
+/** 有块时块尾之后的余量（微秒）：给拖拽/滚动留的呼吸空间，就这么多。 */
+export const CONTENT_TAIL_US = 4_000_000;
+
+/**
+ * 时间线内容时长策略：无块＝固定 30s；有块＝序列时长＋尾部余量。
+ * 不再垫到 30s——短素材右侧不显示没有时间的空段，刻度卡在内容极限。
+ */
+export function contentExtentUs(
+  sequenceDurationUs: number,
+  emptyUs: number = CONTENT_EMPTY_US,
+  tailUs: number = CONTENT_TAIL_US,
+): number {
+  return sequenceDurationUs > 0 ? sequenceDurationUs + tailUs : emptyUs;
+}
+
 /** 刻度标注粒度档：帧 / 秒 / 分，随缩放自适应。 */
 export type RulerTier = "frame" | "second" | "minute";
 

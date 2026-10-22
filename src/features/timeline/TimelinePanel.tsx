@@ -24,13 +24,13 @@ import type { TrackKind } from "../../core/project/types";
 import { TimeRuler } from "./TimeRuler";
 import { TrackHeader } from "./TrackHeader";
 import { TrackLane } from "./TrackLane";
-import { DEFAULT_PX_PER_US, RULER_HEIGHT_PX, zoomPxPerUs } from "./timelineGeometry";
+import {
+  contentExtentUs,
+  DEFAULT_PX_PER_US,
+  RULER_HEIGHT_PX,
+  zoomPxPerUs,
+} from "./timelineGeometry";
 import "./timeline.css";
-
-/** 内容右侧预留余量（微秒）：拖块到末尾外还有得滚。 */
-const CONTENT_TAIL_US = 4_000_000;
-/** 空序列的最小内容时长（微秒）。 */
-const CONTENT_MIN_US = 30_000_000;
 
 export function TimelinePanel() {
   // 只订 document/selection/assets——playheadUs 刻意不订（见文件头注释）
@@ -54,10 +54,8 @@ export function TimelinePanel() {
 
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const selectionSet = useMemo(() => new Set(selection), [selection]);
-  const contentUs = useMemo(
-    () => Math.max(sequenceDurationUs(seq) + CONTENT_TAIL_US, CONTENT_MIN_US),
-    [seq],
-  );
+  // 内容时长策略：无块固定 30s；有块＝时长＋有限余量（短素材右侧不留无时间的空段）
+  const contentUs = useMemo(() => contentExtentUs(sequenceDurationUs(seq)), [seq]);
   /** 吸附候选：全轨块边缘 + 0（播放头由块在拖动开始时快照追加）。 */
   const snapEdges = useMemo(() => {
     const edges: number[] = [0];

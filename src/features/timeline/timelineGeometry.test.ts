@@ -4,6 +4,9 @@
 import { describe, expect, it } from "vitest";
 import {
   clampPxPerUs,
+  contentExtentUs,
+  CONTENT_EMPTY_US,
+  CONTENT_TAIL_US,
   findSnapOffset,
   formatRulerLabel,
   pickRulerStep,
@@ -60,6 +63,23 @@ describe("pickRulerStep（帧/秒/分自适应）", () => {
       const step = pickRulerStep(px, FPS);
       expect(step.minorUs).toBeLessThanOrEqual(step.stepUs);
     }
+  });
+});
+
+describe("contentExtentUs（内容时长策略）", () => {
+  it("无块：固定 30s，不随余量叠加", () => {
+    expect(contentExtentUs(0)).toBe(CONTENT_EMPTY_US);
+    expect(CONTENT_EMPTY_US).toBe(30 * SECOND_US);
+  });
+
+  it("有块：时长＋固定余量，短素材不再垫到 30s", () => {
+    expect(contentExtentUs(10 * SECOND_US)).toBe(10 * SECOND_US + CONTENT_TAIL_US);
+    expect(contentExtentUs(10 * SECOND_US)).toBeLessThan(CONTENT_EMPTY_US);
+  });
+
+  it("长素材照常：60s → 64s", () => {
+    expect(contentExtentUs(60 * SECOND_US)).toBe(60 * SECOND_US + CONTENT_TAIL_US);
+    expect(CONTENT_TAIL_US).toBe(4 * SECOND_US);
   });
 });
 
