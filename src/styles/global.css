@@ -176,10 +176,13 @@ body {
   gap: var(--fang-space-2);
 }
 
+/* 滚动区：坊 ScrollArea 根（自绘滚动条，卡片纵排在内容层） */
 .media-bin__list {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+}
+
+.media-bin__cards {
   display: flex;
   flex-direction: column;
   gap: var(--fang-space-2);

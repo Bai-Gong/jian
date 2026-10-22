@@ -1,5 +1,5 @@
 /**
- * 时间线几何纯函数测试：缩放钳制、刻度档自适应、时间码标注、拖动吸附。
+ * 时间线几何纯函数测试：缩放钳制、刻度档自适应、可视窗口刻度生成、时间码标注、拖动吸附。
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -7,7 +7,9 @@ import {
   findSnapOffset,
   formatRulerLabel,
   pickRulerStep,
+  rulerTicks,
   SNAP_THRESHOLD_PX,
+  visibleRangeUs,
   zoomPxPerUs,
   DEFAULT_PX_PER_US,
   MAX_PX_PER_US,
@@ -58,6 +60,46 @@ describe("pickRulerStep（帧/秒/分自适应）", () => {
       const step = pickRulerStep(px, FPS);
       expect(step.minorUs).toBeLessThanOrEqual(step.stepUs);
     }
+  });
+});
+
+describe("visibleRangeUs / rulerTicks（可视窗口刻度）", () => {
+  const pxPerUs = DEFAULT_PX_PER_US; // 100px/s
+  const contentUs = 30 * SECOND_US; // 空序列内容宽 30s = 3000px
+  const marginPx = 80;
+
+  it("窗口随滚动右移：刻度起点越过 0 之后继续向后生成", () => {
+    // 滚到 2200px（22s），视口 536px：区间 [21.2s, 28.16s]
+    const r = visibleRangeUs(2200, 536, pxPerUs, contentUs, marginPx);
+    expect(r.leftUs).toBeCloseTo(21.2 * SECOND_US, 4);
+    const { majors } = rulerTicks(r.leftUs, r.rightUs, SECOND_US, SECOND_US / 5);
+    expect(majors[0]).toBe(21 * SECOND_US); // 起点落在区间内首个整秒
+    expect(majors[majors.length - 1]).toBe(28 * SECOND_US);
+  });
+
+  it("窗口两端钳制：左侧不为负，右侧不超过内容时长", () => {
+    expect(visibleRangeUs(0, 536, pxPerUs, contentUs, marginPx).leftUs).toBe(0);
+    expect(visibleRangeUs(5000, 536, pxPerUs, contentUs, marginPx).rightUs).toBe(contentUs);
+  });
+
+  it("次刻度与主刻度重合的跳过", () => {
+    const { majors, minors } = rulerTicks(0, 2 * SECOND_US, SECOND_US, SECOND_US / 5);
+    expect(majors).toEqual([0, SECOND_US, 2 * SECOND_US]);
+    expect(minors).toEqual([
+      0.2 * SECOND_US,
+      0.4 * SECOND_US,
+      0.6 * SECOND_US,
+      0.8 * SECOND_US,
+      1.2 * SECOND_US,
+      1.4 * SECOND_US,
+      1.6 * SECOND_US,
+      1.8 * SECOND_US,
+    ]);
+  });
+
+  it("minorUs == stepUs 时不生成次刻度", () => {
+    const { minors } = rulerTicks(0, 5 * SECOND_US, SECOND_US, SECOND_US);
+    expect(minors).toEqual([]);
   });
 });
 

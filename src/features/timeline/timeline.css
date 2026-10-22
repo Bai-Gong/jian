@@ -75,10 +75,10 @@
   border-bottom: 1px solid var(--fang-color-border);
 }
 
+/* 滚动区：坊 ScrollArea 根（自绘滚动条叠在边缘，不再吃 17px 原生条） */
 .timeline-scroll {
   flex: 1;
   min-width: 0;
-  overflow: auto;
 }
 
 .timeline-content {

@@ -16,7 +16,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { DockPanel, useHotkeys } from "@baigong/fang";
+import { DockPanel, ScrollArea, useHotkeys } from "@baigong/fang";
 import { Plus } from "lucide-react";
 import { selectActiveSequence, useProjectStore } from "../../core/project/store";
 import { clipEndUs, sequenceDurationUs } from "../../core/project/timelineOps";
@@ -41,7 +41,9 @@ export function TimelinePanel() {
   const [pxPerUs, setPxPerUs] = useState(DEFAULT_PX_PER_US);
   const pxPerUsRef = useRef(pxPerUs);
 
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  // 滚动容器存元素实例（回调 ref → state）：子组件 TimeRuler 要在挂载帧拿到它，
+  // ref 对象此刻尚未赋值（子 layout effect 先于祖先 DOM ref），null 会让刻度测量永不挂上。
+  const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null);
   const headersRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const markerRef = useRef<HTMLDivElement>(null);
@@ -86,39 +88,40 @@ export function TimelinePanel() {
     applyMarker();
   }, [pxPerUs, applyMarker]);
 
-  // ===== Ctrl+滚轮缩放（以指针为锚） =====
+  // ===== 滚轮：普通滚动横移时间线（NLE 惯例），Ctrl+滚轮以指针为锚缩放 =====
   // React 的 onWheel 是被动监听，preventDefault 无效，须手动挂非被动监听
   useEffect(() => {
-    const scroller = scrollerRef.current;
-    if (!scroller) return;
+    if (!scrollerEl) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return; // 普通滚动走原生
       e.preventDefault(); // 顺带压掉 WebView2 的页面缩放
-      const rect = scroller.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const tUs = (scroller.scrollLeft + viewportX) / pxPerUsRef.current;
-      zoomAnchorRef.current = { tUs, viewportX };
-      setPxPerUs(zoomPxPerUs(pxPerUsRef.current, e.deltaY));
+      if (e.ctrlKey) {
+        const rect = scrollerEl.getBoundingClientRect();
+        const viewportX = e.clientX - rect.left;
+        const tUs = (scrollerEl.scrollLeft + viewportX) / pxPerUsRef.current;
+        zoomAnchorRef.current = { tUs, viewportX };
+        setPxPerUs(zoomPxPerUs(pxPerUsRef.current, e.deltaY));
+        return;
+      }
+      scrollerEl.scrollLeft += e.deltaX + e.deltaY; // 纵向量也映射为时间轴横移
     };
-    scroller.addEventListener("wheel", onWheel, { passive: false });
-    return () => scroller.removeEventListener("wheel", onWheel);
-  }, []);
+    scrollerEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => scrollerEl.removeEventListener("wheel", onWheel);
+  }, [scrollerEl]);
   // 内容宽度提交后校正 scrollLeft，把锚点时间钉回指针位置
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
-    const scroller = scrollerRef.current;
-    if (anchor && scroller) {
-      scroller.scrollLeft = anchor.tUs * pxPerUs - anchor.viewportX;
+    if (anchor && scrollerEl) {
+      scrollerEl.scrollLeft = anchor.tUs * pxPerUs - anchor.viewportX;
       zoomAnchorRef.current = null;
     }
-  }, [pxPerUs]);
+  }, [pxPerUs, scrollerEl]);
 
   // 轨头列垂直同步（直写 DOM，不经状态）
   const onScrollSync = useCallback(() => {
-    if (headersRef.current && scrollerRef.current) {
-      headersRef.current.scrollTop = scrollerRef.current.scrollTop;
+    if (headersRef.current && scrollerEl) {
+      headersRef.current.scrollTop = scrollerEl.scrollTop;
     }
-  }, []);
+  }, [scrollerEl]);
 
   // ===== 播放头定位（刻度尺点击/拖动共用） =====
   const seekFromClientX = useCallback((clientX: number) => {
@@ -187,7 +190,7 @@ export function TimelinePanel() {
           <Plus size={13} />
           音频轨
         </button>
-        <span className="timeline-toolbar__hint">S 分割 · Del 删除 · Ctrl+滚轮 缩放</span>
+        <span className="timeline-toolbar__hint">S 分割 · Del 删除 · 滚轮 横移 · Ctrl+滚轮 缩放</span>
       </div>
 
       <div className="timeline-body">
@@ -198,7 +201,12 @@ export function TimelinePanel() {
           ))}
         </div>
 
-        <div className="timeline-scroll" ref={scrollerRef} onScroll={onScrollSync}>
+        <ScrollArea
+          orientation="both"
+          className="timeline-scroll"
+          onViewportChange={setScrollerEl}
+          onScroll={onScrollSync}
+        >
           <div
             className="timeline-content"
             ref={contentRef}
@@ -208,7 +216,7 @@ export function TimelinePanel() {
               pxPerUs={pxPerUs}
               contentUs={contentUs}
               fps={seq.fps}
-              scrollerRef={scrollerRef}
+              scrollerEl={scrollerEl}
               onSeek={seekFromClientX}
             />
             {seq.tracks.map((track) => (
@@ -233,7 +241,7 @@ export function TimelinePanel() {
               />
             </div>
           </div>
-        </div>
+        </ScrollArea>
       </div>
     </DockPanel>
   );

@@ -4,7 +4,7 @@
  * 本面板只管按钮状态与列表渲染；导入中禁用按钮防重复弹窗。
  */
 import { useCallback, useState } from "react";
-import { DockPanel } from "@baigong/fang";
+import { DockPanel, ScrollArea } from "@baigong/fang";
 import { Upload } from "lucide-react";
 import { useProjectStore } from "../../core/project/store";
 import { importAssets } from "../../core/media/importAssets";
@@ -50,11 +50,13 @@ export function MediaBinPanel() {
             素材池为空——点「导入素材」选择视频 / 音频 / 图片文件，双击卡片即可插入时间线。
           </p>
         ) : (
-          <div className="media-bin__list">
-            {assets.map((asset) => (
-              <AssetCard key={asset.id} asset={asset} onInsert={onInsert} />
-            ))}
-          </div>
+          <ScrollArea orientation="vertical" className="media-bin__list">
+            <div className="media-bin__cards">
+              {assets.map((asset) => (
+                <AssetCard key={asset.id} asset={asset} onInsert={onInsert} />
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </div>
     </DockPanel>

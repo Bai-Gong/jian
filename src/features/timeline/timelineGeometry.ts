@@ -100,6 +100,43 @@ export function pickRulerStep(pxPerUs: number, fps: number): RulerStep {
   return { stepUs: picked.stepUs, tier: picked.tier, minorUs };
 }
 
+/** 可视窗口（含两侧余量 px）换算成微秒区间，并钳到 [0, contentUs]。 */
+export function visibleRangeUs(
+  viewLeftPx: number,
+  viewWidthPx: number,
+  pxPerUs: number,
+  contentUs: number,
+  marginPx: number,
+): { leftUs: number; rightUs: number } {
+  const leftUs = Math.max(0, (viewLeftPx - marginPx) / pxPerUs);
+  const rightUs = Math.min(contentUs, (viewLeftPx + viewWidthPx + marginPx) / pxPerUs);
+  return { leftUs, rightUs };
+}
+
+/** 区间内的主/次刻度位置（微秒）；次刻度与主刻度重合时跳过。 */
+export function rulerTicks(
+  leftUs: number,
+  rightUs: number,
+  stepUs: number,
+  minorUs: number,
+): { majors: number[]; minors: number[] } {
+  const majors: number[] = [];
+  for (let i = Math.floor(leftUs / stepUs); i * stepUs <= rightUs; i++) {
+    if (i < 0) continue;
+    majors.push(i * stepUs);
+  }
+  const minors: number[] = [];
+  if (minorUs < stepUs) {
+    for (let i = Math.floor(leftUs / minorUs); i * minorUs <= rightUs; i++) {
+      if (i < 0) continue;
+      const us = i * minorUs;
+      // 与主刻度重合的跳过（除不尽判定走整数下标）
+      if (Math.abs(us / stepUs - Math.round(us / stepUs)) > 1e-6) minors.push(us);
+    }
+  }
+  return { majors, minors };
+}
+
 /** 两位补零。 */
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
