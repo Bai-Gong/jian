@@ -108,22 +108,7 @@ body {
   cursor: default;
 }
 
-/* —— 顶栏 —— */
-.top-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--fang-space-3);
-  padding: var(--fang-space-2) var(--fang-space-4);
-  border-bottom: 1px solid var(--fang-color-border);
-  background: var(--fang-color-bg-raised);
-  user-select: none;
-  flex: none;
-}
-
-.top-bar__app {
-  font-weight: 600;
-}
-
+/* —— 顶栏（标题栏各槽位内容：标题栏骨架与窗口三键由 fang TitleBar 渲染） —— */
 .top-bar__project {
   color: var(--fang-color-text-secondary);
 }
@@ -132,20 +117,6 @@ body {
   font-family: var(--fang-font-mono);
   font-size: var(--fang-font-size-sm);
   color: var(--fang-color-text-muted);
-}
-
-.top-bar__divider {
-  width: 1px;
-  height: 14px;
-  background: var(--fang-color-border);
-}
-
-.top-bar__actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--fang-space-3);
-  min-width: 0;
 }
 
 .top-bar__export-msg {
