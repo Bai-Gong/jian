@@ -27,6 +27,15 @@ tauri-plugin-log = "2"
 # 命令返回结构与 ffprobe JSON 解析用（M1 施工契约 §1）
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 双引擎回退原因日志（ye 失败→ffprobe 时不静默）；运行期由 tauri-plugin-log 落地
+log = "0.4"
+# 百工·冶（ye）：媒体编解码/处理基础库，git 依赖钉 rev（B 案合流提交）。
+# feature 勾选按 ye 的 feature 设计（crates/ye/Cargo.toml）：
+# - mp4：MP4 容器解封装/封装（ye-container-mp4，progressive 与 fMP4，
+#   含 ContainerRegistry trait 接线与 register_mp4 注册）——当前唯一
+#   容器 feature，probe 双引擎的 MP4 优先路径所需；
+# - codec-stubs / filter-stubs 是 M2+ 接口桩聚合入口，产品路径不依赖，不勾。
+ye = { git = "https://github.com/Bai-Gong/ye.git", rev = "3c27b02d03d530af6b47372ca8505823c54cd4d1", features = ["mp4"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

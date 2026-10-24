@@ -1799,6 +1799,7 @@ dependencies = [
 name = "jian"
 version = "0.1.0"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "tauri",
@@ -1807,6 +1808,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-log",
  "tauri-plugin-opener",
+ "ye",
 ]
 
 [[package]]
@@ -4848,6 +4850,72 @@ dependencies = [
  "once_cell",
  "pkg-config",
 ]
+
+[[package]]
+name = "ye"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+dependencies = [
+ "ye-codec",
+ "ye-container",
+ "ye-container-mp4",
+ "ye-device",
+ "ye-filter",
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-codec"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+dependencies = [
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-container"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+dependencies = [
+ "ye-codec",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-container-mp4"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+dependencies = [
+ "ye-codec",
+ "ye-container",
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-device"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+
+[[package]]
+name = "ye-filter"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+dependencies = [
+ "ye-codec",
+]
+
+[[package]]
+name = "ye-pixfmt"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
+
+[[package]]
+name = "ye-time"
+version = "0.1.0"
+source = "git+https://github.com/Bai-Gong/ye.git?rev=3c27b02d03d530af6b47372ca8505823c54cd4d1#3c27b02d03d530af6b47372ca8505823c54cd4d1"
 
 [[package]]
 name = "yoke"
