@@ -2,7 +2,7 @@
 //! 路径解析三档：BJ_FFMPEG_DIR → src-tauri/binaries（sidecar）→ 系统 PATH。
 
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
@@ -51,15 +51,13 @@ fn resolve_ffmpeg_info() -> Result<FfmpegInfo, String> {
     }
     // ③ 系统 PATH（which 逻辑，Windows 补 .exe/.cmd/.bat 后缀）
     let hint = "请安装 FFmpeg、设置 BJ_FFMPEG_DIR，或运行 node scripts/fetch-ffmpeg.mjs 下载到 src-tauri/binaries/";
-    let ff = find_in_path("ffmpeg")
-        .ok_or_else(|| format!("PATH 里找不到 ffmpeg，{hint}"))?;
-    let fp = find_in_path("ffprobe")
-        .ok_or_else(|| format!("PATH 里找不到 ffprobe，{hint}"))?;
+    let ff = find_in_path("ffmpeg").ok_or_else(|| format!("PATH 里找不到 ffmpeg，{hint}"))?;
+    let fp = find_in_path("ffprobe").ok_or_else(|| format!("PATH 里找不到 ffprobe，{hint}"))?;
     ok_info(ff, fp, "path")
 }
 
 /// 目录下找 ffmpeg/ffprobe 两个可执行文件，缺一返回 None。
-fn exe_pair_in(dir: &PathBuf) -> Option<(PathBuf, PathBuf)> {
+fn exe_pair_in(dir: &Path) -> Option<(PathBuf, PathBuf)> {
     let ff = dir.join(exe_file_name("ffmpeg"));
     let fp = dir.join(exe_file_name("ffprobe"));
     (ff.is_file() && fp.is_file()).then_some((ff, fp))
@@ -71,10 +69,10 @@ fn sidecar_dirs() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd.join("binaries"));
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            dirs.push(dir.join("binaries"));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.join("binaries"));
     }
     dirs
 }
@@ -119,10 +117,11 @@ fn ok_info(ff: PathBuf, fp: PathBuf, source: &str) -> Result<FfmpegInfo, String>
     })
 }
 
-/// 抽帧：取 path 在 time_us 处的一帧，写成临时目录下的 PNG，返回文件绝对路径。
-/// 微秒换算成秒（6 位小数保住微秒精度）；-frames:v 1 只要一帧。
-#[tauri::command(async)]
-pub fn extract_frame(path: String, time_us: i64) -> Result<String, String> {
+/// 抽帧（ffmpeg 引擎，oracle 与回退路径）：取 path 在 time_us 处的一帧，
+/// 写成临时目录下的 PNG，返回文件绝对路径。微秒换算成秒（6 位小数保住
+/// 微秒精度）；-frames:v 1 只要一帧。命令位（`extract_frame`）在 frame.rs，
+/// 默认走 ye、失败回退到本函数。
+pub(crate) fn extract_frame_ffmpeg(path: &str, time_us: i64) -> Result<String, String> {
     let ffmpeg = ffmpeg_info()?.ffmpeg_path;
     let time_us = time_us.max(0); // 负时间对 -ss 无意义，钳到 0
     let time_s = format!("{:.6}", time_us as f64 / 1e6);
@@ -132,20 +131,23 @@ pub fn extract_frame(path: String, time_us: i64) -> Result<String, String> {
         .arg("-ss")
         .arg(&time_s)
         .arg("-i")
-        .arg(&path)
+        .arg(path)
         .arg("-frames:v")
         .arg("1")
         .arg(&out)
         .output()
         .map_err(|e| format!("启动 ffmpeg 失败（{ffmpeg}）: {e}"))?;
     if !result.status.success() {
-        return Err(format!("抽帧失败（{path}）: {}", stderr_tail(&result.stderr)));
+        return Err(format!(
+            "抽帧失败（{path}）: {}",
+            stderr_tail(&result.stderr)
+        ));
     }
     Ok(out.to_string_lossy().into_owned())
 }
 
 /// 进程内唯一文件名片段：纳秒时间戳 + 自增计数，足够临时文件去重。
-fn unique_token() -> String {
+pub(crate) fn unique_token() -> String {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
@@ -194,8 +196,12 @@ pub fn run_export(
         }
     }
 
-    let status = child.wait().map_err(|e| format!("等待 ffmpeg 退出失败: {e}"))?;
-    let stderr_buf = stderr_handle.join().map_err(|_| "stderr 读取线程崩溃".to_string())?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("等待 ffmpeg 退出失败: {e}"))?;
+    let stderr_buf = stderr_handle
+        .join()
+        .map_err(|_| "stderr 读取线程崩溃".to_string())?;
     if !status.success() {
         return Err(format!(
             "ffmpeg 导出失败（退出码 {:?}）: {}",
