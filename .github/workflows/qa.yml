@@ -57,6 +57,10 @@ jobs:
           workspaces: src-tauri
       - name: cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      # 对拍/回归测试进 CI（2026-10-24 评审补）：ubuntu-latest 自带 ffmpeg，
+      # 对拍测试会真跑而不是 skip——「Ok 但数据错」类回归在 CI 里有防线。
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
   qa-app-windows:
     name: QA 试用安装包 (Windows)

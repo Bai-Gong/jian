@@ -71,8 +71,9 @@ fn head_is_mp4_family(head: &[u8]) -> bool {
     size >= 8 && (&head[4..8] == b"ftyp" || &head[4..8] == b"styp")
 }
 
-/// 读文件头做 ftyp 嗅探；短文件按实际长度判。
-fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
+/// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
+/// 与 waveform.rs（波形引擎路由）共用本判定。
+pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
     let mut file = std::fs::File::open(path)?;
     let mut head = [0u8; 8];
     let mut filled = 0usize;
@@ -110,8 +111,11 @@ fn probe_with_ye(path: &str) -> Result<ProbeResult, String> {
 /// ① attached_pic 封面流：MP4 系里 ffmpeg 把封面写成 moov 元数据里的 covr
 ///    盒（movenc 行为），不落成 trak 轨道；ye 的 MP4 reader 对 udta 等
 ///    非轨道 box 一律跳过，不会把封面合成流——ye 路径天然无此坑（mp3/flac
-///    的封面流坑仍在 ffprobe 路径处理，见 parse_probe_json）。若未来 ye 把
-///    covr 暴露成流，对拍测试（对拍_ye与ffprobe_小mp4关键字段一致）会顶出差异。
+///    的封面流坑仍在 ffprobe 路径处理，见 parse_probe_json）。对拍测试的
+///    夹具带 attached_pic 封面（生成命令含 color 源 + mjpeg + attached_pic
+///    disposition），流数断言按内容流对齐、显式剔除 ffprobe 侧重新表面
+///    化的封面流——若未来 ye 把 covr 暴露成流，ye 侧会多一条，对拍测试
+///    （对拍_ye与ffprobe_小mp4关键字段一致）即顶出差异。
 /// ② 扩展名优先判图片：与 ffprobe 路径共用 classify_media_kind，扩展名
 ///    集合与次序完全一致（ftyp 命中但扩展名是 .png/.jpg 的仍判 image）。
 /// ③ avg_frame_rate 0/0 回退：ye 的 VideoParams.frame_rate 当前恒 None
@@ -188,10 +192,7 @@ fn header_to_probe_result(h: &MediaHeader, path: &str) -> Result<ProbeResult, St
 /// ye-cli probe 同款公式。
 fn approx_stream_fps(s: &Stream) -> Option<f64> {
     let frames = s.nb_frames? as f64;
-    let secs = s
-        .duration
-        .map(|d| d.to_seconds())
-        .filter(|x| *x > 0.0)?;
+    let secs = s.duration.map(|d| d.to_seconds()).filter(|x| *x > 0.0)?;
     Some(frames / secs)
 }
 
@@ -216,8 +217,7 @@ fn run_ffprobe_json(path: &str) -> Result<Value, String> {
             stderr_tail(&out.stderr)
         ));
     }
-    serde_json::from_slice(&out.stdout)
-        .map_err(|e| format!("解析 ffprobe 输出失败（{path}）: {e}"))
+    serde_json::from_slice(&out.stdout).map_err(|e| format!("解析 ffprobe 输出失败（{path}）: {e}"))
 }
 
 fn probe_with_ffprobe(path: &str) -> Result<ProbeResult, String> {
@@ -230,7 +230,11 @@ fn probe_with_ffprobe(path: &str) -> Result<ProbeResult, String> {
 ///    流判定放在前则图片永远走不到，必须扩展名优先）；
 /// ② 有视频流 → video（gif 走此支，取真实 fps）；
 /// ③ 有音频流 → audio；④ 否则报错。
-fn classify_media_kind(ext: &str, has_video: bool, has_audio: bool) -> Result<&'static str, String> {
+fn classify_media_kind(
+    ext: &str,
+    has_video: bool,
+    has_audio: bool,
+) -> Result<&'static str, String> {
     match ext.to_ascii_lowercase().as_str() {
         "png" | "jpg" | "jpeg" | "webp" | "bmp" => Ok("image"),
         _ if has_video => Ok("video"),
@@ -288,7 +292,11 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
         .unwrap_or_else(|| stream_max_duration_us(&streams));
 
     // 图片是零时长素材：durationUs=0、fps=0（types.ts:53）
-    let (duration_us, fps) = if kind == "image" { (0, 0.0) } else { (duration_us, fps) };
+    let (duration_us, fps) = if kind == "image" {
+        (0, 0.0)
+    } else {
+        (duration_us, fps)
+    };
 
     Ok(ProbeResult {
         duration_us,
@@ -506,7 +514,9 @@ mod tests {
         assert!(!head_is_mp4_family(b"RIFF\x00\x00\x00\x00"));
         assert!(!head_is_mp4_family(b"OggS\x00\x02\x00\x00"));
         assert!(!head_is_mp4_family(b"ID3\x04\x00\x00\x00"));
-        assert!(!head_is_mp4_family(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]));
+        assert!(!head_is_mp4_family(&[
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a
+        ]));
         // box 类型对但 size < 8（非法 box）
         assert!(!head_is_mp4_family(&[0, 0, 0, 4, b'f', b't', b'y', b'p']));
         // 短头
@@ -673,7 +683,10 @@ mod tests {
     #[test]
     fn 对拍_ye与ffprobe_小mp4关键字段一致() {
         // 缺 ffmpeg 自动 skip（ask 约定）
-        let Ok(probe) = std::process::Command::new("ffmpeg").arg("-version").output() else {
+        let Ok(probe) = std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+        else {
             eprintln!("skip：PATH 里没有 ffmpeg");
             return;
         };
@@ -685,18 +698,50 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jian-probe-parity-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("建临时目录");
         let mp4 = dir.join("parity.mp4");
+        // 三输入：视频 + 音频 + 单帧封面（color 源造 1 帧，编 mjpeg、
+        // disposition attached_pic——mp4 muxer 把它写成 moov 元数据 covr 盒，
+        // ffprobe 读回时重新表面化为 attached_pic=1 的 mjpeg 流，ye 只解析
+        // trak 轨道不报它：对拍的流数断言因此按「内容流」对齐并显式
+        // 过滤 ffprobe 侧的封面流——若未来 ye 把 covr 暴露成流，ye 侧
+        // 会多出一条，本测试即顶出差异（2026-10-24 评审：夹具此前没有
+        // 封面，该兜底承诺落空）。
         let gen_out = std::process::Command::new("ffmpeg")
             .args(["-y", "-hide_banner", "-loglevel", "error"])
-            .args(["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=2"])
-            .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100:duration=2"])
-            .args(["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"])
-            .args(["-c:a", "aac", "-ac", "2", "-shortest"])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x240:rate=25:duration=2",
+            ])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=44100:duration=2",
+            ])
+            .args([
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:size=320x240:rate=1:duration=1",
+            ])
+            .args(["-map", "0:v", "-map", "1:a", "-map", "2:v"])
+            .args([
+                "-c:v:0",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .args(["-c:a", "aac", "-ac", "2"])
+            .args(["-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"])
             .arg(&mp4)
             .output()
             .expect("spawn ffmpeg");
         assert!(
             gen_out.status.success(),
-            "ffmpeg 生成小 MP4 失败：{}",
+            "ffmpeg 生成含封面小 MP4 失败：{}",
             String::from_utf8_lossy(&gen_out.stderr)
         );
         let path = mp4.to_str().unwrap();
@@ -708,7 +753,11 @@ mod tests {
         let ff_r = parse_probe_json(&ff_json, path).expect("ffprobe 解析应成功");
 
         // —— ProbeResult 层 ——
-        assert_eq!(ye_r.kind, ff_r.kind, "kind：ye={} ff={}", ye_r.kind, ff_r.kind);
+        assert_eq!(
+            ye_r.kind, ff_r.kind,
+            "kind：ye={} ff={}",
+            ye_r.kind, ff_r.kind
+        );
         assert_eq!(ye_r.width, ff_r.width, "width");
         assert_eq!(ye_r.height, ff_r.height, "height");
         assert_eq!(ye_r.has_audio, ff_r.has_audio, "has_audio");
@@ -727,13 +776,26 @@ mod tests {
         );
 
         // —— 原始结构层：编解码、采样率、流数 ——
-        let ff_streams: Vec<Value> =
-            ff_json["streams"].as_array().cloned().unwrap_or_default();
-        // ffprobe 对 ffmpeg 产物可能多报一条 timed_id3 数据流（写 metadata 的
-        // 副产物），ye 只解析 trak 轨道——按内容流（video/audio）对齐
+        let ff_streams: Vec<Value> = ff_json["streams"].as_array().cloned().unwrap_or_default();
+        // 夹具须真的带封面（attached_pic=1 的 mjpeg 流）——否则下面的
+        // 封面过滤分支是死代码，兜底承诺再次落空。
+        assert!(
+            ff_streams
+                .iter()
+                .any(|s| s["disposition"]["attached_pic"].as_i64() == Some(1)),
+            "夹具应含 attached_pic 封面流"
+        );
+        // ffprobe 对 ffmpeg 产物可能多报：①timed_id3 数据流（写 metadata
+        // 的副产物）；②封面流（mov demuxer 把 moov 里的 covr 盒重新表面
+        // 化为 attached_pic=1 的视频流，ye 只解析 trak 不报）。两者都按
+        // 「内容流」对齐剔除——ye 若未来把 covr 暴露成流，ye 侧会多出
+        // 一条，此断言即顶出差异。
         let ff_content: Vec<&Value> = ff_streams
             .iter()
-            .filter(|s| matches!(s["codec_type"].as_str(), Some("video") | Some("audio")))
+            .filter(|s| {
+                matches!(s["codec_type"].as_str(), Some("video") | Some("audio"))
+                    && s["disposition"]["attached_pic"].as_i64() != Some(1)
+            })
             .collect();
         let ye_content: Vec<&Stream> = header
             .streams
@@ -753,7 +815,9 @@ mod tests {
             assert_eq!(y_name, f_name, "编解码：ye={y_name} ff={f_name}");
             if y.media_type == MediaType::Audio {
                 let y_sr = y.codec.audio.as_ref().map(|a| a.sample_rate);
-                let f_sr = f["sample_rate"].as_str().and_then(|s| s.parse::<u32>().ok());
+                let f_sr = f["sample_rate"]
+                    .as_str()
+                    .and_then(|s| s.parse::<u32>().ok());
                 assert_eq!(y_sr, f_sr, "采样率：ye={y_sr:?} ff={f_sr:?}");
             }
         }
@@ -761,7 +825,10 @@ mod tests {
         let ye_v = ye_content.iter().find(|s| s.media_type == MediaType::Video);
         let ff_v = ff_content.iter().find(|s| s["codec_type"] == "video");
         if let (Some(y), Some(f)) = (ye_v, ff_v) {
-            assert_eq!(y.codec.video.as_ref().unwrap().width, f["width"].as_u64().unwrap() as u32);
+            assert_eq!(
+                y.codec.video.as_ref().unwrap().width,
+                f["width"].as_u64().unwrap() as u32
+            );
             assert_eq!(
                 y.codec.video.as_ref().unwrap().height,
                 f["height"].as_u64().unwrap() as u32
