@@ -1807,6 +1807,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-log",
  "tauri-plugin-opener",
+ "ye",
 ]
 
 [[package]]
@@ -4848,6 +4849,90 @@ dependencies = [
  "once_cell",
  "pkg-config",
 ]
+
+[[package]]
+name = "ye"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-codec-aac",
+ "ye-codec-h264",
+ "ye-container",
+ "ye-container-mp4",
+ "ye-device",
+ "ye-filter",
+ "ye-pixfmt",
+ "ye-png",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-codec"
+version = "0.1.0"
+dependencies = [
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-codec-aac"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-codec-h264"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-container"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-container-mp4"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-container",
+ "ye-pixfmt",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-device"
+version = "0.1.0"
+
+[[package]]
+name = "ye-filter"
+version = "0.1.0"
+dependencies = [
+ "ye-codec",
+ "ye-time",
+]
+
+[[package]]
+name = "ye-pixfmt"
+version = "0.1.0"
+
+[[package]]
+name = "ye-png"
+version = "0.1.0"
+
+[[package]]
+name = "ye-time"
+version = "0.1.0"
 
 [[package]]
 name = "yoke"

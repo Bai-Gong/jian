@@ -1,7 +1,17 @@
-// 百工·剪：官方插件 + M1 自研命令（ffprobe 探测 / ffmpeg 定位、抽帧、导出执行）。
-// 命令实现见 probe.rs、ffmpeg.rs；导出参数由前端 buildExportArgs 生成，这里只负责执行与进度事件。
+// 百工·剪：官方插件 + 自研命令（ffprobe/ye 双引擎探测，ffmpeg/ye 双引擎
+// 抽帧与波形，ffmpeg 导出执行）。
+// 命令实现见 probe.rs、ffmpeg.rs、ye_engine.rs、waveform.rs；导出参数由前端
+// buildExportArgs 生成，这里只负责执行与进度事件。
+// ye_engine.rs 是进程内抽帧引擎、waveform.rs 是波形双引擎（ye 优先轨 +
+// ffmpeg 回退轨，两轨 pub 纯库函数拆分供独立调用，回退决策在命令内
+// auto_route，详见两模块文档；抽帧的回退决策归前端 thumbnail.ts）。
+// probe/waveform/ye_engine 三模块 pub 供单元测试与集成测试
+// （tests/parity.rs 对拍）直调生产路径（duan lib.rs 同款先例）；
+// ffmpeg 模块无直调需求，保持私有。
 mod ffmpeg;
-mod probe;
+pub mod probe;
+pub mod waveform;
+pub mod ye_engine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,6 +24,9 @@ pub fn run() {
             probe::probe_media,
             ffmpeg::ffmpeg_info,
             ffmpeg::extract_frame,
+            ye_engine::extract_frame_ye,
+            // 波形命令串列于抽帧两命令之后（同段串行注册），导出执行收尾
+            waveform::waveform,
             ffmpeg::run_export,
         ])
         .run(tauri::generate_context!())

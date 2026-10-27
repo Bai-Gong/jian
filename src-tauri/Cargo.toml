@@ -27,6 +27,12 @@ tauri-plugin-log = "2"
 # 命令返回结构与 ffprobe JSON 解析用（M1 施工契约 §1）
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ye 进程内媒体引擎（ye 接线轨）：
+# 路径依赖指到门面包本体（../../ye 是虚拟 workspace 清单，不可直接依赖）；
+# CI 上由 workflow 检出 Bai-Gong/ye 到兄弟目录 ../ye（与 fang alias 联调同一套路）。
+# feature 面比 duan（mp4+h264）多开两件：aac——剪辑时间线音频轨解码/重编码；
+# png——抽帧缩略图经 ye-png 出口（encode-only，ye 侧为此设计的消费方）。
+ye = { path = "../../ye/crates/ye", default-features = false, features = ["mp4", "h264", "aac", "png"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
