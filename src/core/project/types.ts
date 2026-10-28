@@ -49,12 +49,21 @@ export interface MediaAsset {
   /** 绝对路径（经 Tauri 对话框选择，跨平台由 Rust 侧规整）。 */
   path: string;
   kind: AssetKind;
-  /** 以下为 ffprobe 元数据（M1 接入；image 时 durationUs 为 0）。 */
+  /** 以下为 probe 元数据（M1 接入；image 时 durationUs 为 0）。 */
   durationUs: number;
   width: number;
   height: number;
   fps: number;
   hasAudio: boolean;
+  /** 第一条内容视频流的 codec 名（如 "h264"；无视频流为空串）。M4 导出双引擎：
+   *  ye 轨翻译层（buildYeExportParams）据此校验「源视频 H.264」接受面。 */
+  videoCodec: string;
+  /** 第一条音频流的 codec 名（如 "aac"；无音轨为空串）。 */
+  audioCodec: string;
+  /** 第一条音频流采样率 Hz（无音轨为 0）。 */
+  sampleRate: number;
+  /** 第一条音频流声道数（无音轨为 0）。 */
+  channels: number;
   /** 导入时间戳（epoch ms），素材箱排序用。 */
   addedAt: number;
 }

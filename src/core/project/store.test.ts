@@ -1,8 +1,40 @@
 /**
  * store 行为测试：locked/类型兼容的写入门禁、selection 联动、
- * subscribeWithSelector 契约、不可变更新。
+ * subscribeWithSelector 契约、不可变更新、导出引擎偏好的持久化往返。
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// node 环境无 localStorage：先装内存版再 import store（persist 在模块加载
+// 时就会碰 storage——duan preset store 测试同款手法）。partialize 只落
+// exportEngine（document 保存/加载归 M3，勿混进持久层）。
+const testStorage = vi.hoisted(() => {
+  class MemoryStorage implements Storage {
+    private map = new Map<string, string>();
+    get length(): number {
+      return this.map.size;
+    }
+    clear(): void {
+      this.map.clear();
+    }
+    getItem(key: string): string | null {
+      return this.map.has(key) ? this.map.get(key)! : null;
+    }
+    key(index: number): string | null {
+      return [...this.map.keys()][index] ?? null;
+    }
+    removeItem(key: string): void {
+      this.map.delete(key);
+    }
+    setItem(key: string, value: string): void {
+      this.map.set(key, String(value));
+    }
+  }
+  const storage = new MemoryStorage();
+  (globalThis as unknown as { localStorage: Storage }).localStorage = storage;
+  (globalThis as unknown as { window: typeof globalThis }).window = globalThis;
+  return storage;
+});
+
 import { createInitialDocument } from "./factory";
 import { selectActiveSequence, useProjectStore } from "./store";
 import type { AssetKind, MediaAsset, Track } from "./types";
@@ -18,6 +50,10 @@ function makeAsset(kind: AssetKind, durationUs = 10_000_000): MediaAsset {
     height: 1080,
     fps: kind === "audio" ? 0 : 30,
     hasAudio: kind !== "image",
+    videoCodec: kind === "video" ? "h264" : "",
+    audioCodec: kind !== "image" ? "aac" : "",
+    sampleRate: kind !== "image" ? 48_000 : 0,
+    channels: kind !== "image" ? 2 : 0,
     addedAt: 0,
   };
 }
@@ -232,3 +268,19 @@ describe("不可变更新", () => {
     expect(state().document.version).toBe(2);
   });
 });
+
+describe("导出引擎偏好（persist）", () => {
+  it("setExportEngine 写入且 partialize 只落 exportEngine（往返）", () => {
+    useProjectStore.getState().setExportEngine("ye");
+    expect(useProjectStore.getState().exportEngine).toBe("ye");
+    // 持久层只含引擎偏好：document/selection 等不进 localStorage
+    const raw = testStorage.getItem("jian.project");
+    expect(raw).toBeTruthy();
+    const persisted = JSON.parse(raw!) as { state: Record<string, unknown> };
+    expect(persisted.state).toEqual({ exportEngine: "ye" });
+    // 复位回 ffmpeg
+    useProjectStore.getState().setExportEngine("ffmpeg");
+    expect(useProjectStore.getState().exportEngine).toBe("ffmpeg");
+  });
+});
+

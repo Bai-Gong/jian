@@ -19,6 +19,15 @@ export interface ProbeResult {
   fps: number;
   hasAudio: boolean;
   kind: AssetKind;
+  /** 第一条内容视频流的 codec 名（如 "h264"；无视频流为空串）。M4 导出
+   *  双引擎：ye 轨翻译层的接受面校验用。 */
+  videoCodec: string;
+  /** 第一条音频流的 codec 名（如 "aac"；无音轨为空串）。 */
+  audioCodec: string;
+  /** 第一条音频流采样率 Hz（无音轨为 0）。 */
+  sampleRate: number;
+  /** 第一条音频流声道数（无音轨为 0）。 */
+  channels: number;
   /** 实际产出结果的引擎（"ye" | "ffmpeg"）；auto 回退后即回退轨名。可选兼容旧后端。 */
   usedEngine?: ProbeEngine;
 }

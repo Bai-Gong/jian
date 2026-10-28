@@ -43,6 +43,10 @@ export async function importAssets(): Promise<MediaAsset[]> {
       height: info.height,
       fps: info.fps,
       hasAudio: info.hasAudio,
+      videoCodec: info.videoCodec ?? "",
+      audioCodec: info.audioCodec ?? "",
+      sampleRate: info.sampleRate ?? 0,
+      channels: info.channels ?? 0,
       addedAt: Date.now(),
     });
   });

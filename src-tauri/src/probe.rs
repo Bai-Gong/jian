@@ -50,6 +50,16 @@ pub struct ProbeResult {
     pub fps: f64,
     pub has_audio: bool,
     pub kind: String,
+    /// 第一条内容视频流的 codec_name（如 "h264"/"hevc"；无视频流为空串）。
+    /// M4 导出双引擎：ye 轨翻译层（buildYeExportParams）据此校验「源视频
+    /// H.264」的接受面。
+    pub video_codec: String,
+    /// 第一条音频流的 codec_name（如 "aac"/"mp3"；无音轨为空串）。
+    pub audio_codec: String,
+    /// 第一条音频流采样率 Hz（无音轨为 0）。
+    pub sample_rate: u32,
+    /// 第一条音频流声道数（无音轨为 0）。
+    pub channels: u32,
     /// 实际产出本结果的引擎（"ye" | "ffmpeg"）：auto 回退后即回退轨名，
     /// 显式引擎恒等于所请求的引擎。
     pub used_engine: String,
@@ -165,6 +175,10 @@ struct MediaSummary {
     width: u32,
     height: u32,
     fps: f64,
+    video_codec: String,
+    audio_codec: String,
+    sample_rate: u32,
+    channels: u32,
     /// 容器级时长（微秒），缺失为 None。
     container_duration_us: Option<i64>,
     /// 流级时长（微秒）集合，容器级缺失时取最大。
@@ -201,6 +215,10 @@ fn finalize_summary(s: MediaSummary, path: &str, used_engine: &str) -> Result<Pr
         fps,
         has_audio: s.has_audio,
         kind,
+        video_codec: s.video_codec,
+        audio_codec: s.audio_codec,
+        sample_rate: s.sample_rate,
+        channels: s.channels,
         used_engine: used_engine.to_string(),
     })
 }
@@ -215,6 +233,10 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
         width: 0,
         height: 0,
         fps: 0.0,
+        video_codec: String::new(),
+        audio_codec: String::new(),
+        sample_rate: 0,
+        channels: 0,
         container_duration_us: v["format"]["duration"]
             .as_str()
             .and_then(|d| d.parse::<f64>().ok())
@@ -237,6 +259,7 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
                 s.has_video = true;
                 s.width = st["width"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
                 s.height = st["height"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+                s.video_codec = st["codec_name"].as_str().unwrap_or("").to_string();
                 // 帧率用 avg_frame_rate；个别封装报 0/0，退回 r_frame_rate
                 s.fps = st["avg_frame_rate"]
                     .as_str()
@@ -245,16 +268,26 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
                     .unwrap_or(0.0);
             }
             Some("video") => {}
-            Some("audio") => s.has_audio = true,
+            Some("audio") if !s.has_audio => {
+                s.has_audio = true;
+                s.audio_codec = st["codec_name"].as_str().unwrap_or("").to_string();
+                s.sample_rate = st["sample_rate"]
+                    .as_str()
+                    .and_then(|r| r.parse::<u32>().ok())
+                    .unwrap_or(0);
+                s.channels = st["channels"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+            Some("audio") => {}
             _ => {}
         }
     }
     finalize_summary(s, path, ENGINE_FFMPEG)
 }
 
-/// ye 头信息 → [`MediaSummary`]：视频流取 stsd 宽高；帧率容器不带
-/// （stsd 表达不了，ye 读侧恒 None），按 样本数/流时长 推导；音频流只标记
-/// 存在性；容器级时长取头信息 canonical 时长（mp4 读侧为各流时长最大值）。
+/// ye 头信息 → [`MediaSummary`]：视频流取 stsd 宽高 + codec；帧率容器不带
+/// （stsd 表达不了，ye 读侧恒 None），按 样本数/流时长 推导；音频流取
+/// codec + 采样率/声道（声道数经默认声道布局保全）；容器级时长取头信息
+/// canonical 时长（mp4 读侧为各流时长最大值）。
 fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
     let mut s = MediaSummary {
         has_video: false,
@@ -262,6 +295,10 @@ fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
         width: 0,
         height: 0,
         fps: 0.0,
+        video_codec: String::new(),
+        audio_codec: String::new(),
+        sample_rate: 0,
+        channels: 0,
         container_duration_us: header.duration.map(timestamp_us),
         stream_durations_us: header
             .streams
@@ -273,6 +310,8 @@ fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
         match st.media_type {
             MediaType::Video if !s.has_video => {
                 s.has_video = true;
+                // codec 名与 ffprobe 的 codec_name 对齐（CodecId Debug 转小写）。
+                s.video_codec = codec_name(st.codec.codec);
                 if let Some(v) = &st.codec.video {
                     s.width = v.width;
                     s.height = v.height;
@@ -285,11 +324,24 @@ fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
                 }
             }
             MediaType::Video => {}
-            MediaType::Audio => s.has_audio = true,
+            MediaType::Audio if !s.has_audio => {
+                s.has_audio = true;
+                s.audio_codec = codec_name(st.codec.codec);
+                if let Some(a) = &st.codec.audio {
+                    s.sample_rate = a.sample_rate;
+                    s.channels = a.channel_layout.map_or(0, |l| l.channels());
+                }
+            }
+            MediaType::Audio => {}
             _ => {}
         }
     }
     s
+}
+
+/// CodecId → ffprobe 风格 codec_name（"h264"/"aac"；Unknown → "unknown"）。
+fn codec_name(id: ye::codec::CodecId) -> String {
+    format!("{id:?}").to_lowercase()
 }
 
 /// 疑似封面启发式（纯函数，供单测）。ye Stream 无 disposition/attached_pic，
@@ -428,8 +480,8 @@ mod tests {
     fn 解析最小视频_json() {
         let v = serde_json::json!({
             "streams": [
-                {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30000/1001"},
-                {"codec_type": "audio"}
+                {"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080, "avg_frame_rate": "30000/1001"},
+                {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 2}
             ],
             "format": {"duration": "12.345678"}
         });
@@ -440,6 +492,10 @@ mod tests {
         assert_eq!(r.height, 1080);
         assert!((r.fps - 30000.0 / 1001.0).abs() < 1e-9);
         assert!(r.has_audio);
+        assert_eq!(r.video_codec, "h264");
+        assert_eq!(r.audio_codec, "aac");
+        assert_eq!(r.sample_rate, 48_000);
+        assert_eq!(r.channels, 2);
         assert_eq!(r.used_engine, "ffmpeg");
     }
 
@@ -672,16 +728,14 @@ mod tests {
     #[test]
     fn ye摘要_帧率由样本数与流时长推导() {
         // mp4 读侧 frame_rate 恒 None：90 帧 / 3s = 30fps；宽高取 stsd
-        let h = header_of(vec![stream_of(
-            MediaType::Video,
-            Some(3_000_000),
-            Some(90),
-            video_params(),
-        )]);
+        let mut stream = stream_of(MediaType::Video, Some(3_000_000), Some(90), video_params());
+        stream.codec.codec = CodecId::H264;
+        let h = header_of(vec![stream]);
         let s = summarize_ye_header(&h);
         assert_eq!(s.width, 320);
         assert_eq!(s.height, 240);
         assert!((s.fps - 30.0).abs() < 1e-9);
+        assert_eq!(s.video_codec, "h264");
         assert!(!s.has_audio);
         // 零时长/零帧不推帧率（保持 0，不造数）
         let degenerate = header_of(vec![stream_of(
@@ -691,6 +745,22 @@ mod tests {
             video_params(),
         )]);
         assert_eq!(summarize_ye_header(&degenerate).fps, 0.0);
+    }
+
+    #[test]
+    fn ye摘要_音频参数取自流布局() {
+        // AAC 立体声 44.1k：codec 名对齐 ffprobe 命名，声道经默认布局保全
+        let mut audio = stream_of(MediaType::Audio, Some(2_000_000), None, None);
+        audio.codec.codec = CodecId::Aac;
+        audio.codec.audio = Some(ye::codec::AudioParams {
+            sample_rate: 44_100,
+            channel_layout: Some(ye::pixfmt::ChannelLayout::STEREO),
+            sample_format: None,
+        });
+        let s = summarize_ye_header(&header_of(vec![audio]));
+        assert_eq!(s.audio_codec, "aac");
+        assert_eq!(s.sample_rate, 44_100);
+        assert_eq!(s.channels, 2);
     }
 
     // ---- 双引擎对拍向量（施工图 §3.1 配方写死）----
