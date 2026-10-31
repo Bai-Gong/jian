@@ -40,6 +40,9 @@ body {
 .media-bin-panel > .fang-dock-panel__body {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden !important;
 }
 
 /* —— 通用按钮（token 化，供各面板共用） —— */
@@ -258,6 +261,7 @@ body {
 
 .preview-stage-wrap {
   flex: 1;
+  align-items: center;
   min-height: 0;
   display: flex;
   justify-content: center;

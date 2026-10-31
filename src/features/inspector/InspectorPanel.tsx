@@ -1,8 +1,4 @@
-/**
- * 效果控件面板：M1 只读——展示选中单块的素材/时间线/变换/音频静态值。
- * 编辑（变换拖拽、关键帧、效果参数）随 M2–M4 开放；此处先把「模型有值」可视化。
- * 无选中显示序列信息；多选显示计数（M1 属性面板只支持单选）。
- */
+/** 静态变换与音频属性；锁定或关键帧数据保留并禁止静态覆盖。 */
 import { DockPanel } from "@baigong/fang";
 import { useProjectStore, selectActiveSequence } from "../../core/project/store";
 import { clipDurationUs, clipEndUs, sequenceDurationUs } from "../../core/project/timelineOps";
@@ -11,8 +7,6 @@ import { formatDurationLabel, formatTimecode } from "../preview/timecode";
 import { basename } from "../media-bin/AssetCard";
 
 const KIND_LABEL: Record<MediaAsset["kind"], string> = { video: "视频", audio: "音频", image: "图片" };
-
-/** 静态值文案；关键帧形态 M1 不会出现（工厂全静态），兜底显示占位。 */
 
 /** 在活动序列里找选中块及其所在轨。 */
 function findSelectedClip(
@@ -36,11 +30,11 @@ export function InspectorPanel() {
   const asset = picked ? assets.find((a) => a.id === picked.clip.assetId) : undefined;
   const control = (group:"transform"|"audio", name:string, prop:Animatable<number>, min?:number, max?:number, step=0.01) => prop.kind!=="static"
     ? <span>关键帧（保留，暂不可编辑）</span>
-    : <input aria-label={name} type="number" value={prop.value} min={min} max={max} step={step} disabled={picked?.track.locked}
+    : <input aria-label={({x:"位置 X",y:"位置 Y",scale:"缩放",rotation:"旋转",opacity:"不透明度",gain:"增益",pan:"声像"} as Record<string,string>)[name] ?? name} type="number" value={prop.value} min={min} max={max} step={step} disabled={picked?.track.locked}
         style={{width:76}} onChange={(event)=>{if(picked && event.target.value!=="")useProjectStore.getState().setClipProperty(picked.clip.id,group,name,Number(event.target.value));}} />;
 
   return (
-    <DockPanel title="效果控件" collapsed={false} style={{ flex: 1, minHeight: 0 }}>
+    <DockPanel title="属性" className="inspector-panel" collapsed={false} style={{ flex: 1, minHeight: 0 }}>
       {picked ? (
         <div className="inspector">
           <div className="inspector__head">
@@ -69,7 +63,7 @@ export function InspectorPanel() {
             <dd>×{picked.clip.speed.toFixed(2)}</dd>
           </dl>
 
-          <p className="inspector__section">变换（静态值）</p>
+          <p className="inspector__section">变换</p>
           <dl className="inspector__rows">
             <dt>位置 X / Y</dt>
             <dd>
@@ -90,14 +84,14 @@ export function InspectorPanel() {
             <dd>{control("audio","gain",picked.clip.audio.gain,0,2)}</dd>
             <dt>声像</dt><dd>{control("audio","pan",picked.clip.audio.pan,-1,1)}</dd>
             <dt>效果</dt>
-            <dd>{picked.clip.effects.length} 个（编辑随 M2 开放）</dd>
+            <dd>{picked.clip.effects.length} 个</dd>
           </dl>
         </div>
       ) : selection.length > 1 ? (
-        <p className="panel-placeholder">已选中 {selection.length} 个块——M1 属性面板只支持单选。</p>
+        <p className="panel-placeholder">已选中 {selection.length} 个块，请单选一个片段以调整属性。</p>
       ) : (
         <div className="inspector">
-          <p className="panel-placeholder">未选中剪辑块——在时间线上点选后此处显示属性。</p>
+          <p className="panel-placeholder">在画布、图层或时间线中选择片段，调整变换与音频。</p>
           <p className="inspector__section">序列信息</p>
           <dl className="inspector__rows">
             <dt>名称</dt>
