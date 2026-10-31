@@ -39,12 +39,22 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm test
 
   rust-gate:
     name: Rust 门禁 (cargo check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ye 兄弟仓库检出（原因见 ci.yml 同名步骤注释；cargo check 需 ../ye）
+      - name: 检出 ye（ye 引擎依赖的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/ye
+          ref: a83ae7f52a0703ab05675d4a3b5f2291cf72b7f4
+          path: ye
+      - name: ye 挪到兄弟目录
+        run: mv ye ../ye
       - name: 安装 Tauri 系统依赖
         run: |
           sudo apt-get update
@@ -78,6 +88,15 @@ jobs:
       # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
       - name: fang 挪到兄弟目录
         run: mv fang ../fang
+      # ye 兄弟仓库检出（原因见 ci.yml 同名步骤注释；tauri build 需 ../ye）
+      - name: 检出 ye（ye 引擎依赖的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/ye
+          ref: a83ae7f52a0703ab05675d4a3b5f2291cf72b7f4
+          path: ye
+      - name: ye 挪到兄弟目录
+        run: mv ye ../ye
       - uses: actions/setup-node@v4
         with:
           node-version: 22

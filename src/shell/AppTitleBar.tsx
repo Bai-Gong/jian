@@ -5,8 +5,14 @@
  * 通用默认项（defaultMenus 的编辑/帮助模式）待撤销重做落地后接入。
  *
  * 导出流程（施工契约 §7，自原 TopBar 迁移）：save 对话框选 .mp4 → exportProject
- * （内部走 run_export 命令并转 export-progress 事件为 onProgress 回调）→ 导出中
- * 按钮禁用＋百分比，完成/失败出文本提示。
+ * （内部按引擎分流 run_export / run_export_ye 并转 export-progress 事件为
+ * onProgress 回调）→ 导出中按钮禁用＋百分比，完成/失败出文本提示。
+ *
+ * 引擎切换（M4 接线轨，duan TopBar 同款形态）：ffmpeg＝子进程（全形态、
+ * 回退与对拍基准）；ye＝进程内合成（M4 首轮顺序拼接；能力面外由
+ * buildYeExportParams 在导出时明确报错，不静默降级）。导出中锁切换；
+ * 导出走 getEngine 注入（exportProject 的注入模式），store 里的引擎偏好
+ * 持久化（partialize 只落这一项）。
  */
 import { useCallback, useMemo, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
@@ -23,6 +29,9 @@ export function AppTitleBar() {
     const seq = selectActiveSequence(s);
     return `${seq.width}×${seq.height}@${seq.fps}`;
   });
+  const exporting = useProjectStore((s) => s.exportState.running);
+  const engine = useProjectStore((s) => s.exportEngine);
+  const setEngine = useProjectStore((s) => s.setExportEngine);
 
   const [phase, setPhase] = useState<"idle" | "exporting">("idle");
   const [percent, setPercent] = useState(0);
@@ -39,11 +48,18 @@ export function AppTitleBar() {
     setPercent(0);
     setMessage(null);
     try {
-      await exportProject(selectActiveSequence(state), state.document.assets, outPath, (p) => {
-        // 进度事件按微秒对齐，换算百分比并钳 0–100
-        const ratio = p.totalUs > 0 ? p.timeUs / p.totalUs : 0;
-        setPercent(Math.max(0, Math.min(100, Math.round(ratio * 100))));
-      });
+      await exportProject(
+        selectActiveSequence(state),
+        state.document.assets,
+        outPath,
+        (p) => {
+          // 进度事件按微秒对齐，换算百分比并钳 0–100
+          const ratio = p.totalUs > 0 ? p.timeUs / p.totalUs : 0;
+          setPercent(Math.max(0, Math.min(100, Math.round(ratio * 100))));
+        },
+        // 引擎取自 store（导出瞬间的最新选择；exportProject 的注入面）
+        { getEngine: () => useProjectStore.getState().exportEngine },
+      );
       setMessage({ kind: "ok", text: `已导出：${outPath}` });
     } catch (err) {
       setMessage({ kind: "error", text: `导出失败：${err instanceof Error ? err.message : String(err)}` });
@@ -94,6 +110,17 @@ export function AppTitleBar() {
               {message.text}
             </span>
           )}
+          <select
+            className="top-bar__engine"
+            value={engine}
+            onChange={(e) => setEngine(e.target.value as "ffmpeg" | "ye")}
+            disabled={exporting || phase === "exporting"}
+            title="导出引擎：ffmpeg＝子进程（全形态、回退与对拍基准）；ye＝进程内（M4 首轮顺序拼接，能力面外的序列会在导出时明确报错）"
+            aria-label="导出引擎"
+          >
+            <option value="ffmpeg">引擎：ffmpeg</option>
+            <option value="ye">引擎：ye（冶）</option>
+          </select>
           <button
             type="button"
             className="btn btn--primary"

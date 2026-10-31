@@ -21,6 +21,10 @@ function makeAsset(overrides: Partial<MediaAsset> = {}): MediaAsset {
     height: 1080,
     fps: 30,
     hasAudio: true,
+    videoCodec: "h264",
+    audioCodec: "aac",
+    sampleRate: 48_000,
+    channels: 2,
     addedAt: 0,
     ...overrides,
   };

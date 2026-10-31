@@ -9,10 +9,16 @@
  * - mute 只影响求值（音频层），不影响本层任何写入。
  */
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { subscribeWithSelector } from "zustand/middleware";
 import type { MediaAsset, ProjectDocument, Sequence, Track, TrackKind } from "./types";
 import { createClip, createInitialDocument, createTrack, DEFAULT_IMAGE_CLIP_US, nextTrackName } from "./factory";
 import * as timelineOps from "./timelineOps";
+
+/** 导出引擎二选一（M4 接线轨）：ffmpeg＝子进程（全形态、回退与对拍基准）；
+ * ye＝进程内合成（M4 首轮：顺序拼接；能力面外由 buildYeExportParams 在导出时
+ * 明确拒绝，不静默降级）。 */
+export type ExportEngine = "ffmpeg" | "ye";
 
 /**
  * 导出会话状态（M1 同时至多一个导出任务）：TopBar 订阅它显示进度百分比/禁用按钮。
@@ -36,6 +42,10 @@ export interface ProjectState {
   exportState: ExportState;
   /** 导出状态补丁式合并写入（高频进度更新只动变化字段）。 */
   setExportState(patch: Partial<ExportState>): void;
+  /** 导出引擎（M4 接线轨；持久化到 localStorage，仅此一项——document 的
+   * 保存/加载归 M3 工程化，勿把会话态混进持久层）。 */
+  exportEngine: ExportEngine;
+  setExportEngine(engine: ExportEngine): void;
 
   addAssets(assets: MediaAsset[]): void;
   /** 插同类组末位（命名 Vn/An 自增），返回新轨 id。 */
@@ -77,12 +87,19 @@ function withTracks(doc: ProjectDocument, seqId: string, tracks: Track[]): Proje
   };
 }
 
+export const PROJECT_STORAGE_KEY = "jian.project";
+
 export const useProjectStore = create<ProjectState>()(
-  subscribeWithSelector((set, get) => ({
-    document: createInitialDocument(),
-    selection: [],
-    playheadUs: 0,
-    isPlaying: false,
+  subscribeWithSelector(
+    persist(
+      (set, get) => ({
+        document: createInitialDocument(),
+        selection: [],
+        playheadUs: 0,
+        isPlaying: false,
+        exportEngine: "ffmpeg",
+
+        setExportEngine: (engine) => set({ exportEngine: engine }),
 
     addAssets: (assets) => {
       if (assets.length === 0) return;
@@ -267,7 +284,17 @@ export const useProjectStore = create<ProjectState>()(
         ),
       });
     },
-  })),
+      }),
+      {
+        name: PROJECT_STORAGE_KEY,
+        version: 1,
+        // 只持久化导出引擎偏好（duan preset store 同款思路）：document 的
+        // 工程保存/加载是 M3 里程碑的功能（含另定的文件格式），selection/
+        // playhead/exportState 是会话态——都不得混进 localStorage。
+        partialize: (s) => ({ exportEngine: s.exportEngine }),
+      },
+    ),
+  ),
 );
 
 /** 派生：当前活动序列。activeSequenceId 悬空属数据损坏，早炸早暴露。 */

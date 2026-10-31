@@ -46,6 +46,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm test
       - name: 上传构建产物
         if: always()
         uses: actions/upload-artifact@v4
@@ -60,6 +61,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ye 兄弟仓库检出（ye 接线轨）：Cargo.toml 的 ye 引擎路径依赖指
+      # ../../ye/crates/ye（门面包本体；ye 仓库根是虚拟 workspace 清单），
+      # runner 只有本仓库，须把 ye 检出为兄弟目录 ../ye。ref=develop 随子模块
+      # 跟踪分支（与本地检出存在漂移窗口，fang 同款取舍）。
+      - name: 检出 ye（ye 引擎依赖的兄弟仓库）
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/ye
+          ref: a83ae7f52a0703ab05675d4a3b5f2291cf72b7f4
+          path: ye
+      - name: ye 挪到兄弟目录
+        run: mv ye ../ye
       - name: 安装 Tauri 系统依赖
         run: |
           sudo apt-get update

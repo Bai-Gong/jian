@@ -1,21 +1,46 @@
-//! 媒体探测双引擎：MP4 系（ftyp 嗅探）优先走 ye（百工·冶，ContainerRegistry
-//! 自动探测），失败或非 MP4 回退 ffprobe——回退一律记原因日志，不得静默掩盖
-//! ye 的 bug；ffprobe 同时是开发期对拍 oracle。时间一律微秒；图片按零时长
-//! 素材处理（types.ts 的 image 约定）。
+//! 双引擎探测封装：媒体文件元数据 → 前端 MediaAsset 所需字段（M1 施工契约
+//! §1；M2 T7 双引擎）。时间一律微秒；图片按零时长素材处理（types.ts 的
+//! image 约定）。
+//!
+//! 引擎三态（`engine` 参数，缺省 auto）：
+//! - `auto`：ye 轨（[`ContainerRegistry::probe`]，注册 mp4）优先；ye 轨 Err
+//!   或命中疑似封面启发式（[`suspected_cover`]）→ 整体回退 ffprobe 轨；
+//! - `ye`：只走 ye 轨，不回退（对拍 oracle 用；封面素材会被当视频流误判，
+//!   调用方自知，正常业务请用 auto/ffmpeg）；
+//! - `ffmpeg`：只走 ffprobe 子进程轨（回退与 oracle 轨，M1 语义原样）。
+//!
+//! 口径两轨同源不分叉：各轨把流/容器信息折算进 [`MediaSummary`]，kind 判定
+//! 次序与时长回退统一收尾在 [`finalize_summary`] 纯函数。封面剔除
+//! （ffprobe 的 disposition.attached_pic）只在 ffprobe 轨——ye Stream 无
+//! disposition 概念，以 [`suspected_cover`] 形状启发式兜住后整体回退：
+//! 含「mp4 家族 attached_pic 封面写 covr 原子、ye 头整条不可见」的盲区
+//! 兜底（见其函数注释实测记录）。
 
-use std::io::{BufReader, Read};
-use std::path::Path;
+use std::fs::File;
+use std::io::BufReader;
 
 use serde::Serialize;
 use serde_json::Value;
 use ye::codec::MediaType;
-use ye::container::mp4::register_mp4;
 use ye::container::{ContainerRegistry, MediaHeader, Stream};
-use ye::time::Rational;
+use ye::time::Timestamp;
 
 use crate::ffmpeg::{ffmpeg_info, stderr_tail};
 
-/// ffprobe / ye 共同产出的探测结果（camelCase 序列化，对齐前端 MediaAsset 字段名）。
+/// 引擎标识：auto（ye 优先 + 回退）。也作为前端 engine 参数的合法取值。
+const ENGINE_AUTO: &str = "auto";
+/// 引擎标识：ye 进程内轨（同时是 usedEngine 的取值之一）。
+const ENGINE_YE: &str = "ye";
+/// 引擎标识：ffprobe 子进程轨（同时是 usedEngine 的取值之一）。
+const ENGINE_FFMPEG: &str = "ffmpeg";
+
+/// 疑似封面启发式阈值（测试常量，施工图 §2.3 定死；收紧/放宽须回施工图重定口径）：
+/// 视频流时长上限 1s（长音频时被「音频×5%」进一步压低）。
+const COVER_MAX_VIDEO_US: i64 = 1_000_000;
+/// 疑似封面启发式阈值：最长音频流时长 × 5%。
+const COVER_AUDIO_RATIO: f64 = 0.05;
+
+/// 探测结果（camelCase 序列化，对齐前端 MediaAsset 字段名）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {
@@ -25,181 +50,65 @@ pub struct ProbeResult {
     pub fps: f64,
     pub has_audio: bool,
     pub kind: String,
+    /// 第一条内容视频流的 codec_name（如 "h264"/"hevc"；无视频流为空串）。
+    /// M4 导出双引擎：ye 轨翻译层（buildYeExportParams）据此校验「源视频
+    /// H.264」的接受面。
+    pub video_codec: String,
+    /// 第一条音频流的 codec_name（如 "aac"/"mp3"；无音轨为空串）。
+    pub audio_codec: String,
+    /// 第一条音频流采样率 Hz（无音轨为 0）。
+    pub sample_rate: u32,
+    /// 第一条音频流声道数（无音轨为 0）。
+    pub channels: u32,
+    /// 实际产出本结果的引擎（"ye" | "ffmpeg"）：auto 回退后即回退轨名，
+    /// 显式引擎恒等于所请求的引擎。
+    pub used_engine: String,
 }
 
-/// 探测一个媒体文件，失败时把原因带回前端。
-///
-/// 双引擎判定面：文件头 12 字节内是 ftyp/styp box（MP4 系，含 m4a/m4v/fMP4
-/// 段）→ 先走 ye；ye 出错（解析失败、IO、bug）→ warn 记原因后回退 ffprobe。
-/// 非 MP4 系（mp3/wav/图片/mkv…）ye 尚无对应容器，直接走 ffprobe（debug 记
-/// 路由原因）。ffprobe 自身失败则如实报错——两个引擎都失败时把 ffprobe 的
-/// 错误带给前端（与单引擎时期行为一致）。
+/// 探测一个媒体文件，失败时把原因带回前端。engine 缺省 auto（ye 优先，
+/// Err/疑似封面整体回退 ffprobe）；显式 ye/ffmpeg 各走各轨、互不越界。
 #[tauri::command(async)]
-pub fn probe_media(path: String) -> Result<ProbeResult, String> {
-    match sniff_is_mp4_family(&path) {
-        Ok(true) => match probe_with_ye(&path) {
-            Ok(result) => Ok(result),
-            Err(ye_err) => {
-                // ye 的 bug 不许静默：回退原因必须留痕（tauri-plugin-log 落到前端控制台）
-                log::warn!("ye 探测失败，回退 ffprobe（{path}）：{ye_err}");
-                probe_with_ffprobe(&path)
-            }
+pub fn probe_media(path: String, engine: Option<String>) -> Result<ProbeResult, String> {
+    let engine = engine.unwrap_or_else(|| ENGINE_AUTO.to_string());
+    match engine.as_str() {
+        ENGINE_FFMPEG => probe_ffmpeg(&path),
+        ENGINE_YE => probe_ye(&path),
+        ENGINE_AUTO => match auto_via_ye(&path) {
+            YeRoute::Result(r) => Ok(r),
+            // ye 轨 Err 或疑似封面 → 整体回退 ffprobe 轨（结果以 ffprobe 为准）
+            YeRoute::Fallback => probe_ffmpeg(&path),
         },
-        Ok(false) => {
-            log::debug!("非 MP4 系（ftyp 嗅探未命中），直接走 ffprobe（{path}）");
-            probe_with_ffprobe(&path)
-        }
-        Err(e) => {
-            // 嗅探读不动（不存在/无权限）：交给 ffprobe 产出统一的用户向报错
-            log::warn!("ftyp 嗅探读文件失败，走 ffprobe（{path}）：{e}");
-            probe_with_ffprobe(&path)
-        }
+        other => Err(format!(
+            "未知 engine「{other}」（合法值：auto / ye / ffmpeg）"
+        )),
     }
 }
 
-// —— 判定面：ftyp 嗅探 ——
-
-/// 文件头是否 MP4 系（纯函数，供单测）：≥8 字节、首 box size ≥ 8 且类型为
-/// ftyp/styp。规则与 ye MP4 工厂的 probe_mp4（ye-container-mp4 adapter.rs）
-/// 同源；brand 是否在常见集不影响路由——进了 ye 还有 ContainerRegistry
-/// 自动探测打分兜底。
-fn head_is_mp4_family(head: &[u8]) -> bool {
-    if head.len() < 8 {
-        return false;
-    }
-    let size = u32::from_be_bytes(head[0..4].try_into().unwrap()) as u64;
-    size >= 8 && (&head[4..8] == b"ftyp" || &head[4..8] == b"styp")
+/// auto 模式下 ye 轨的路由结论：拿到结果，或「该回退 ffprobe」。
+enum YeRoute {
+    Result(ProbeResult),
+    Fallback,
 }
 
-/// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
-/// 与 waveform.rs（波形引擎路由）共用本判定。
-pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
-    let mut file = std::fs::File::open(path)?;
-    let mut head = [0u8; 8];
-    let mut filled = 0usize;
-    while filled < head.len() {
-        let n = file.read(&mut head[filled..])?;
-        if n == 0 {
-            break; // EOF：短文件按已读部分判
-        }
-        filled += n;
-    }
-    Ok(head_is_mp4_family(&head[..filled]))
-}
-
-// —— ye 引擎 ——
-
-/// ye 探测：注册表挂 MP4 工厂后 auto-probe 打开 + 读头，一步式
-/// （ContainerRegistry::probe，ye 文档明说 jian 列素材信息直接用它）。
-fn run_ye_probe(path: &str) -> Result<(String, MediaHeader), String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("打开文件失败（{path}）: {e}"))?;
-    let mut registry = ContainerRegistry::new();
-    register_mp4(&mut registry);
-    registry
-        .probe(Box::new(BufReader::new(file)))
-        .map_err(|e| format!("ye 探测失败: {e}"))
-}
-
-fn probe_with_ye(path: &str) -> Result<ProbeResult, String> {
-    let (_, header) = run_ye_probe(path)?;
-    header_to_probe_result(&header, path)
-}
-
-/// ye 头信息 → ProbeResult（纯函数，供单测与对拍）。
-///
-/// 剪在 ffprobe 路径踩过的四个坑，ye 路径的对齐情况：
-/// ① attached_pic 封面流：MP4 系里 ffmpeg 把封面写成 moov 元数据里的 covr
-///    盒（movenc 行为），不落成 trak 轨道；ye 的 MP4 reader 对 udta 等
-///    非轨道 box 一律跳过，不会把封面合成流——ye 路径天然无此坑（mp3/flac
-///    的封面流坑仍在 ffprobe 路径处理，见 parse_probe_json）。对拍测试的
-///    夹具带 attached_pic 封面（生成命令含 color 源 + mjpeg + attached_pic
-///    disposition），流数断言按内容流对齐、显式剔除 ffprobe 侧重新表面
-///    化的封面流——若未来 ye 把 covr 暴露成流，ye 侧会多一条，对拍测试
-///    （对拍_ye与ffprobe_小mp4关键字段一致）即顶出差异。
-/// ② 扩展名优先判图片：与 ffprobe 路径共用 classify_media_kind，扩展名
-///    集合与次序完全一致（ftyp 命中但扩展名是 .png/.jpg 的仍判 image）。
-/// ③ avg_frame_rate 0/0 回退：ye 的 VideoParams.frame_rate 当前恒 None
-///    （MP4 box 无权威帧率字段），回退链为 nb_frames ÷ 流时长——与 ffprobe
-///    对 MP4 的 avg_frame_rate 同一公式（CFR 精确，VFR 近似），再缺失退 0，
-///    语义等价 ffprobe 侧的 avg_frame_rate → r_frame_rate → 0 链。
-/// ④ 容器无时长退流时长：ye 的 MP4 read_header 本就把容器时长算成
-///    「各轨时长最大值」（adapter.rs），等价 ffprobe 侧的容器缺时长退流
-///    时长最大值；两边都拿不到时 ye 为 None → 0。
-fn header_to_probe_result(h: &MediaHeader, path: &str) -> Result<ProbeResult, String> {
-    let mut has_video = false;
-    let mut has_audio = false;
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut fps = 0.0;
-    // 画幅/帧率取第一条视频流；音频流只标记存在性（与 ffprobe 侧同策略）
-    for s in &h.streams {
-        match s.media_type {
-            MediaType::Video if !has_video => {
-                has_video = true;
-                if let Some(v) = &s.codec.video {
-                    width = v.width;
-                    height = v.height;
-                }
-                fps = s
-                    .codec
-                    .video
-                    .as_ref()
-                    .and_then(|v| v.frame_rate)
-                    .map(|r| r.to_f64())
-                    .or_else(|| approx_stream_fps(s))
-                    .unwrap_or(0.0);
-            }
-            MediaType::Video => {}
-            MediaType::Audio => has_audio = true,
-            MediaType::Subtitle => {}
-        }
-    }
-
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
-    let kind = classify_media_kind(ext, has_video, has_audio)
-        .map_err(|e| format!("{e}: {path}"))?
-        .to_string();
-
-    // 容器级时长已在 ye read_header 里取过「各轨最大值」（坑④）；
-    // canonical 时基（1/7_056_000）精确重标度到微秒
-    let duration_us: i64 = h
-        .duration
-        .and_then(|d| d.rescale(Rational::new(1, 1_000_000)).ok())
-        .map(|t| t.ticks())
-        .unwrap_or(0);
-
-    // 图片是零时长素材：durationUs=0、fps=0（types.ts:53）
-    let (duration_us, fps) = if kind == "image" {
-        (0, 0.0)
-    } else {
-        (duration_us, fps)
+/// auto 路由主体（纯流程，无 Tauri 类型）：ye 读头 → 疑似封面判定 → 折算
+/// 收尾；任何一步 Err（打不开/容器不识/kind 无法判定）都按 Fallback 处理
+/// ——ffprobe 是权威轨，误伤只是慢一点，漏判才会错数据。
+fn auto_via_ye(path: &str) -> YeRoute {
+    let header = match ye_header(path) {
+        Ok(h) => h,
+        Err(_) => return YeRoute::Fallback,
     };
-
-    Ok(ProbeResult {
-        duration_us,
-        width,
-        height,
-        fps,
-        has_audio,
-        kind,
-    })
+    if suspected_cover(&header) {
+        return YeRoute::Fallback;
+    }
+    match finalize_summary(summarize_ye_header(&header), path, ENGINE_YE) {
+        Ok(r) => YeRoute::Result(r),
+        Err(_) => YeRoute::Fallback,
+    }
 }
 
-/// 帧率近似（坑③回退）：样例数 ÷ 流时长；帧数或时长缺失/为 0 → None。
-/// ye-cli probe 同款公式。
-fn approx_stream_fps(s: &Stream) -> Option<f64> {
-    let frames = s.nb_frames? as f64;
-    let secs = s.duration.map(|d| d.to_seconds()).filter(|x| *x > 0.0)?;
-    Some(frames / secs)
-}
-
-// —— ffprobe 引擎（oracle 与回退）——
-
-/// 跑 ffprobe 进程并解析 JSON（供回退路径与对拍测试取原始结构）。
-fn run_ffprobe_json(path: &str) -> Result<Value, String> {
+/// ffprobe 轨（M1 语义原样，oracle 与回退轨）。
+fn probe_ffmpeg(path: &str) -> Result<ProbeResult, String> {
     let ffprobe = ffmpeg_info()?.ffprobe_path;
     let out = std::process::Command::new(&ffprobe)
         .arg("-v")
@@ -217,12 +126,27 @@ fn run_ffprobe_json(path: &str) -> Result<Value, String> {
             stderr_tail(&out.stderr)
         ));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("解析 ffprobe 输出失败（{path}）: {e}"))
+    let json: Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("解析 ffprobe 输出失败（{path}）: {e}"))?;
+    parse_probe_json(&json, path)
 }
 
-fn probe_with_ffprobe(path: &str) -> Result<ProbeResult, String> {
-    let json = run_ffprobe_json(path)?;
-    parse_probe_json(&json, path)
+/// ye 轨：注册 mp4 的注册表一步式探查，返回头信息（不解码任何包）。
+fn probe_ye(path: &str) -> Result<ProbeResult, String> {
+    let header = ye_header(path)?;
+    finalize_summary(summarize_ye_header(&header), path, ENGINE_YE)
+}
+
+/// 打开文件并经 ContainerRegistry 探查（auto 与显式 ye 共用；注册表目前
+/// 只注册 mp4，其余容器在 auto 下自然落入 Err → ffprobe 回退）。
+fn ye_header(path: &str) -> Result<MediaHeader, String> {
+    let file = File::open(path).map_err(|e| format!("ye 打开失败（{path}）: {e}"))?;
+    let mut registry = ContainerRegistry::new();
+    ye::container::mp4::register_mp4(&mut registry);
+    registry
+        .probe(Box::new(BufReader::new(file)))
+        .map(|(_, header)| header)
+        .map_err(|e| format!("ye 探测失败（{path}）: {e}"))
 }
 
 /// 媒体种类判定（纯函数，供单测）。次序写死：
@@ -243,79 +167,244 @@ fn classify_media_kind(
     }
 }
 
-/// 从 ffprobe JSON 拆字段（纯函数，供单测）。
-fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
-    let streams: Vec<Value> = v["streams"].as_array().cloned().unwrap_or_default();
-    let mut has_video = false;
-    let mut has_audio = false;
-    let mut width = 0u32;
-    let mut height = 0u32;
-    let mut fps = 0.0;
-    // 画幅/帧率取第一条视频流；音频流只标记存在性
-    for s in &streams {
-        // 内嵌封面不算内容视频流：带封面的 mp3/m4a/flac 实测会多出一条
-        // codec_type=video 的 mjpeg 流（disposition.attached_pic=1），不剔除会被
-        // 误判成 video——素材进不了音频轨，导出时封面还会整段叠在成片上。
-        let is_cover = s["disposition"]["attached_pic"].as_i64() == Some(1);
-        match s["codec_type"].as_str() {
-            Some("video") if is_cover => {}
-            Some("video") if !has_video => {
-                has_video = true;
-                width = s["width"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
-                height = s["height"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
-                // 帧率用 avg_frame_rate；个别封装报 0/0，退回 r_frame_rate
-                fps = s["avg_frame_rate"]
-                    .as_str()
-                    .and_then(parse_rate)
-                    .or_else(|| s["r_frame_rate"].as_str().and_then(parse_rate))
-                    .unwrap_or(0.0);
-            }
-            Some("video") => {}
-            Some("audio") => has_audio = true,
-            _ => {}
-        }
-    }
+/// 轨道无关的探测中间摘要：两轨各自把流/容器信息折算进来，口径收尾统一
+/// 走 [`finalize_summary`]——同源不分叉的载体。
+struct MediaSummary {
+    has_video: bool,
+    has_audio: bool,
+    width: u32,
+    height: u32,
+    fps: f64,
+    video_codec: String,
+    audio_codec: String,
+    sample_rate: u32,
+    channels: u32,
+    /// 容器级时长（微秒），缺失为 None。
+    container_duration_us: Option<i64>,
+    /// 流级时长（微秒）集合，容器级缺失时取最大。
+    stream_durations_us: Vec<i64>,
+}
 
-    let ext = Path::new(path)
+/// 口径收尾（两轨同源，纯函数，供单测）：kind 判定次序 → 时长回退（容器级
+/// 优先，缺失取流级最大）→ 图片零时长清零。
+fn finalize_summary(s: MediaSummary, path: &str, used_engine: &str) -> Result<ProbeResult, String> {
+    let ext = std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    let kind = classify_media_kind(ext, has_video, has_audio)
+    let kind = classify_media_kind(ext, s.has_video, s.has_audio)
         .map_err(|e| format!("{e}: {path}"))?
         .to_string();
 
-    // 时长优先取容器 format.duration，缺了再取流时长最大值
-    let duration_us = v["format"]["duration"]
-        .as_str()
-        .and_then(|d| d.parse::<f64>().ok())
-        .map(|sec| (sec * 1e6).round() as i64)
-        .unwrap_or_else(|| stream_max_duration_us(&streams));
+    let duration_us = s
+        .container_duration_us
+        .or_else(|| s.stream_durations_us.iter().copied().max())
+        .unwrap_or(0);
 
     // 图片是零时长素材：durationUs=0、fps=0（types.ts:53）
     let (duration_us, fps) = if kind == "image" {
         (0, 0.0)
     } else {
-        (duration_us, fps)
+        (duration_us, s.fps)
     };
 
     Ok(ProbeResult {
         duration_us,
-        width,
-        height,
+        width: s.width,
+        height: s.height,
         fps,
-        has_audio,
+        has_audio: s.has_audio,
         kind,
+        video_codec: s.video_codec,
+        audio_codec: s.audio_codec,
+        sample_rate: s.sample_rate,
+        channels: s.channels,
+        used_engine: used_engine.to_string(),
     })
 }
 
-/// 流时长最大值（微秒）。部分音频格式只有流级 duration，没有容器级。
-fn stream_max_duration_us(streams: &[Value]) -> i64 {
-    streams
+/// 从 ffprobe JSON 拆字段（纯函数，供单测）：流循环只做封面剔除与首条视频流
+/// 画幅/帧率提取，折算进 [`MediaSummary`] 后交 [`finalize_summary`] 收尾。
+fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
+    let streams: Vec<Value> = v["streams"].as_array().cloned().unwrap_or_default();
+    let mut s = MediaSummary {
+        has_video: false,
+        has_audio: false,
+        width: 0,
+        height: 0,
+        fps: 0.0,
+        video_codec: String::new(),
+        audio_codec: String::new(),
+        sample_rate: 0,
+        channels: 0,
+        container_duration_us: v["format"]["duration"]
+            .as_str()
+            .and_then(|d| d.parse::<f64>().ok())
+            .map(|sec| (sec * 1e6).round() as i64),
+        stream_durations_us: streams
+            .iter()
+            .filter_map(|st| st["duration"].as_str().and_then(|d| d.parse::<f64>().ok()))
+            .map(|sec| (sec * 1e6).round() as i64)
+            .collect(),
+    };
+    // 画幅/帧率取第一条视频流；音频流只标记存在性
+    for st in &streams {
+        // 内嵌封面不算内容视频流：带封面的 mp3/m4a/flac 实测会多出一条
+        // codec_type=video 的 mjpeg 流（disposition.attached_pic=1），不剔除会被
+        // 误判成 video——素材进不了音频轨，导出时封面还会整段叠在成片上。
+        let is_cover = st["disposition"]["attached_pic"].as_i64() == Some(1);
+        match st["codec_type"].as_str() {
+            Some("video") if is_cover => {}
+            Some("video") if !s.has_video => {
+                s.has_video = true;
+                s.width = st["width"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+                s.height = st["height"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+                s.video_codec = st["codec_name"].as_str().unwrap_or("").to_string();
+                // 帧率用 avg_frame_rate；个别封装报 0/0，退回 r_frame_rate
+                s.fps = st["avg_frame_rate"]
+                    .as_str()
+                    .and_then(parse_rate)
+                    .or_else(|| st["r_frame_rate"].as_str().and_then(parse_rate))
+                    .unwrap_or(0.0);
+            }
+            Some("video") => {}
+            Some("audio") if !s.has_audio => {
+                s.has_audio = true;
+                s.audio_codec = st["codec_name"].as_str().unwrap_or("").to_string();
+                s.sample_rate = st["sample_rate"]
+                    .as_str()
+                    .and_then(|r| r.parse::<u32>().ok())
+                    .unwrap_or(0);
+                s.channels = st["channels"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+            }
+            Some("audio") => {}
+            _ => {}
+        }
+    }
+    finalize_summary(s, path, ENGINE_FFMPEG)
+}
+
+/// ye 头信息 → [`MediaSummary`]：视频流取 stsd 宽高 + codec；帧率容器不带
+/// （stsd 表达不了，ye 读侧恒 None），按 样本数/流时长 推导；音频流取
+/// codec + 采样率/声道（声道数经默认声道布局保全）；容器级时长取头信息
+/// canonical 时长（mp4 读侧为各流时长最大值）。
+fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
+    let mut s = MediaSummary {
+        has_video: false,
+        has_audio: false,
+        width: 0,
+        height: 0,
+        fps: 0.0,
+        video_codec: String::new(),
+        audio_codec: String::new(),
+        sample_rate: 0,
+        channels: 0,
+        container_duration_us: header.duration.map(timestamp_us),
+        stream_durations_us: header
+            .streams
+            .iter()
+            .filter_map(|st| st.duration.map(timestamp_us))
+            .collect(),
+    };
+    for st in &header.streams {
+        match st.media_type {
+            MediaType::Video if !s.has_video => {
+                s.has_video = true;
+                // codec 名与 ffprobe 的 codec_name 对齐（CodecId Debug 转小写）。
+                s.video_codec = codec_name(st.codec.codec);
+                if let Some(v) = &st.codec.video {
+                    s.width = v.width;
+                    s.height = v.height;
+                }
+                if let (Some(frames), Some(dur)) = (st.nb_frames, st.duration) {
+                    let dur_us = timestamp_us(dur);
+                    if frames > 0 && dur_us > 0 {
+                        s.fps = frames as f64 * 1e6 / dur_us as f64;
+                    }
+                }
+            }
+            MediaType::Video => {}
+            MediaType::Audio if !s.has_audio => {
+                s.has_audio = true;
+                s.audio_codec = codec_name(st.codec.codec);
+                if let Some(a) = &st.codec.audio {
+                    s.sample_rate = a.sample_rate;
+                    s.channels = a.channel_layout.map_or(0, |l| l.channels());
+                }
+            }
+            MediaType::Audio => {}
+            _ => {}
+        }
+    }
+    s
+}
+
+/// CodecId → ffprobe 风格 codec_name（"h264"/"aac"；Unknown → "unknown"）。
+fn codec_name(id: ye::codec::CodecId) -> String {
+    format!("{id:?}").to_lowercase()
+}
+
+/// 疑似封面启发式（纯函数，供单测）。ye Stream 无 disposition/attached_pic，
+/// 内嵌封面只能靠流形状识别；命中即整体回退 ffprobe 轨（那边有 disposition
+/// 可精确剔除）。判据（①② 为施工图 §2.3 原文；③ 为 2026-10-27 本机实测
+/// 补充，见函数体注释）：
+/// ① 多条视频流 → 疑似（真实内容视频 + 封面缩略图的组合形状）；
+/// ② 存在音频流且唯一视频流命中其一：
+///    时长 < min(1s, 最长音频流时长×5%)，或 nb_frames=1（单帧视频配音频
+///    即封面形状；个别封装把封面轨时长写成与音频等长，时长判据抓不到，
+///    nb_frames 兜底）；
+/// ③ 有音频流而无视频流（mp4 家族音频）→ 疑似。
+/// 误伤（真短视频/纯音频被当封面）只是多跑一次 ffprobe，结果仍以权威轨
+/// 为准；漏判才会把音频素材误报成 video——判据从严不从宽。
+fn suspected_cover(header: &MediaHeader) -> bool {
+    let videos: Vec<&Stream> = header
+        .streams
         .iter()
-        .filter_map(|s| s["duration"].as_str().and_then(|d| d.parse::<f64>().ok()))
-        .map(|sec| (sec * 1e6).round() as i64)
-        .max()
-        .unwrap_or(0)
+        .filter(|st| st.media_type == MediaType::Video)
+        .collect();
+    if videos.len() > 1 {
+        return true;
+    }
+    if !header
+        .streams
+        .iter()
+        .any(|st| st.media_type == MediaType::Audio)
+    {
+        return false;
+    }
+    let Some(video) = videos.first() else {
+        // ③ mp4 家族的 attached_pic 封面写在 moov.udta.meta 的 covr 原子，
+        // 不是 trak——ye 的头信息里整条封面消失（vec-cover.m4a 实测仅见
+        // 一条音频流），①② 无从命中；且 AAC priming 使 ye 的 mdhd 时长比
+        // ffprobe 的 edit list 口径长（实测 2026667µs vs 2000000µs）。
+        // 音频族整体回退权威轨：封面剔除与时长口径都归 ffprobe。
+        return true;
+    };
+    let max_audio_us = header
+        .streams
+        .iter()
+        .filter(|st| st.media_type == MediaType::Audio)
+        .filter_map(|st| st.duration.map(timestamp_us))
+        .max();
+    let duration_suspect = video
+        .duration
+        .map(timestamp_us)
+        .is_some_and(|d| d < cover_threshold_us(max_audio_us));
+    duration_suspect || video.nb_frames == Some(1)
+}
+
+/// 封面判据的视频时长上限：min(1s, 最长音频×5%)。音频时长缺失时只按
+/// 1s 上限（保守；mp4 读侧流时长恒有值，此支纯为全函数兜底）。
+fn cover_threshold_us(max_audio_us: Option<i64>) -> i64 {
+    match max_audio_us {
+        Some(audio) => COVER_MAX_VIDEO_US.min(((audio as f64) * COVER_AUDIO_RATIO).round() as i64),
+        None => COVER_MAX_VIDEO_US,
+    }
+}
+
+/// 时戳 → 微秒（四舍五入）。两轨时长换算的唯一出入口。
+fn timestamp_us(t: Timestamp) -> i64 {
+    (t.to_seconds() * 1e6).round() as i64
 }
 
 /// 解析 ffprobe 的分数帧率（如 "30000/1001"），先约分再相除；0 或非法返回 None。
@@ -345,12 +434,13 @@ fn gcd(mut a: i64, mut b: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-    use ye::codec::{AudioParams, CodecId, CodecParameters, VideoParams};
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+    use ye::codec::{CodecId, CodecParameters, VideoParams};
     use ye::container::Metadata;
-    use ye::time::{CANONICAL_TIME_BASE, Timestamp};
+    use ye::time::Rational;
 
-    // ---- 既有 ffprobe 路径测试（原样保留） ----
+    // ---- 既有口径单测（M1，双轨重构后必须原样通过）----
 
     #[test]
     fn png_扩展名优先于视频流() {
@@ -388,10 +478,10 @@ mod tests {
 
     #[test]
     fn 解析最小视频_json() {
-        let v = json!({
+        let v = serde_json::json!({
             "streams": [
-                {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "30000/1001"},
-                {"codec_type": "audio"}
+                {"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080, "avg_frame_rate": "30000/1001"},
+                {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 2}
             ],
             "format": {"duration": "12.345678"}
         });
@@ -402,12 +492,17 @@ mod tests {
         assert_eq!(r.height, 1080);
         assert!((r.fps - 30000.0 / 1001.0).abs() < 1e-9);
         assert!(r.has_audio);
+        assert_eq!(r.video_codec, "h264");
+        assert_eq!(r.audio_codec, "aac");
+        assert_eq!(r.sample_rate, 48_000);
+        assert_eq!(r.channels, 2);
+        assert_eq!(r.used_engine, "ffmpeg");
     }
 
     #[test]
     fn 解析图片_json_零时长() {
         // ffprobe 对 PNG 报 video 流（png_pipe），扩展名判定使其归 image，时长/帧率清零
-        let v = json!({
+        let v = serde_json::json!({
             "streams": [
                 {"codec_type": "video", "width": 800, "height": 600, "avg_frame_rate": "25/1"}
             ],
@@ -423,7 +518,7 @@ mod tests {
 
     #[test]
     fn 解析纯音频_json_容器无时长退回流时长() {
-        let v = json!({
+        let v = serde_json::json!({
             "streams": [
                 {"codec_type": "audio", "duration": "3.5"}
             ],
@@ -440,7 +535,7 @@ mod tests {
     fn 带内嵌封面的音频不误判成视频() {
         // 实测：ffmpeg 生成含封面 mp3 后 ffprobe 报 streams=[audio, video(mjpeg, attached_pic=1)]。
         // 封面流若计入 has_video，会命中「有视频流→video」，音频素材进不了音频轨。
-        let v = json!({
+        let v = serde_json::json!({
             "streams": [
                 {"codec_type": "audio", "duration": "200.5"},
                 {
@@ -463,7 +558,7 @@ mod tests {
     #[test]
     fn 真实视频带封面缩略图仍判视频() {
         // mp4 内嵌封面缩略图（attached_pic=1）不影响真实视频流判定
-        let v = json!({
+        let v = serde_json::json!({
             "streams": [
                 {"codec_type": "video", "width": 1920, "height": 1080, "avg_frame_rate": "25/1"},
                 {"codec_type": "audio"},
@@ -484,362 +579,458 @@ mod tests {
 
     #[test]
     fn 悬空流信息报无法识别() {
-        let v = json!({"streams": [{"codec_type": "data"}], "format": {"duration": "1.0"}});
+        let v =
+            serde_json::json!({"streams": [{"codec_type": "data"}], "format": {"duration": "1.0"}});
         let err = parse_probe_json(&v, "D:/a/x.txt").unwrap_err();
         assert!(err.contains("无法识别的媒体"), "实际报错：{err}");
         assert!(err.contains("x.txt"));
     }
 
-    // ---- 双引擎判定面：ftyp 嗅探 ----
-
-    /// 真实 MP4 头：size=0x18、ftyp、brand=isom
-    #[test]
-    fn ftyp嗅探_常见mp4头() {
-        assert!(head_is_mp4_family(&[
-            0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm'
-        ]));
-        // m4a 也是 MP4 系
-        assert!(head_is_mp4_family(&[
-            0x00, 0x00, 0x00, 0x20, b'f', b't', b'y', b'p', b'M', b'4', b'A', b' '
-        ]));
-        // fMP4 段头是 styp
-        assert!(head_is_mp4_family(&[
-            0x00, 0x00, 0x00, 0x1c, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'
-        ]));
-    }
+    // ---- 引擎参数 ----
 
     #[test]
-    fn ftyp嗅探_非mp4与非法头() {
-        // RIFF（wav）、OggS、ID3（mp3）、PNG 魔数
-        assert!(!head_is_mp4_family(b"RIFF\x00\x00\x00\x00"));
-        assert!(!head_is_mp4_family(b"OggS\x00\x02\x00\x00"));
-        assert!(!head_is_mp4_family(b"ID3\x04\x00\x00\x00"));
-        assert!(!head_is_mp4_family(&[
-            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a
-        ]));
-        // box 类型对但 size < 8（非法 box）
-        assert!(!head_is_mp4_family(&[0, 0, 0, 4, b'f', b't', b'y', b'p']));
-        // 短头
-        assert!(!head_is_mp4_family(b"ftyp"));
+    fn 未知engine中文报错() {
+        let err = probe_media("D:/a/x.mp4".into(), Some("ffmpegx".into())).unwrap_err();
+        assert!(err.contains("未知 engine"), "实际报错：{err}");
+        assert!(err.contains("auto / ye / ffmpeg"));
     }
 
-    // ---- ye 路径：header → ProbeResult ----
+    // ---- 疑似封面启发式（纯函数，构造头信息）----
 
-    /// 造一条视频流：H264、320x240、frame_rate=None（mp4 reader 现状）、
-    /// 50 样例 @1/25 = 2s。
-    fn ye_video_stream(index: u32) -> Stream {
-        let mut codec = CodecParameters::new(CodecId::H264, MediaType::Video);
-        codec.video = Some(VideoParams {
-            width: 320,
-            height: 240,
-            pixel_format: None,
-            frame_rate: None,
-        });
+    /// 造流：时基 1/1_000_000（µs 直读），视频参数可选。
+    fn stream_of(
+        media_type: MediaType,
+        duration_us: Option<i64>,
+        nb_frames: Option<u64>,
+        video: Option<VideoParams>,
+    ) -> Stream {
         Stream {
-            index,
-            media_type: MediaType::Video,
-            codec,
-            time_base: Rational::new(1, 25),
+            index: 0,
+            media_type,
+            codec: CodecParameters {
+                video,
+                ..CodecParameters::new(CodecId::Unknown, media_type)
+            },
+            time_base: Rational::new(1, 1_000_000),
             start_time: None,
-            duration: Some(Timestamp::new(50, Rational::new(1, 25))),
-            nb_frames: Some(50),
+            duration: duration_us.map(|us| Timestamp::new(us, Rational::new(1, 1_000_000))),
+            nb_frames,
             metadata: Metadata::new(),
         }
     }
 
-    fn ye_audio_stream(index: u32) -> Stream {
-        let mut codec = CodecParameters::new(CodecId::Aac, MediaType::Audio);
-        codec.audio = Some(AudioParams {
-            sample_rate: 44_100,
-            channel_layout: None,
-            sample_format: None,
-        });
-        Stream {
-            index,
-            media_type: MediaType::Audio,
-            codec,
-            time_base: Rational::new(1, 44_100),
-            start_time: None,
-            duration: Some(Timestamp::new(88_200, Rational::new(1, 44_100))),
-            nb_frames: Some(87),
-            metadata: Metadata::new(),
-        }
-    }
-
-    /// 视频流 50 样例 ÷ 2s = 25fps（坑③回退链），画幅/时长/音频标记齐全。
-    #[test]
-    fn ye头信息_视频音频齐全() {
-        let header = MediaHeader {
+    fn header_of(streams: Vec<Stream>) -> MediaHeader {
+        MediaHeader {
             format_name: "mp4".to_string(),
-            streams: vec![ye_video_stream(0), ye_audio_stream(1)],
-            duration: Some(Timestamp::new(2 * 7_056_000, CANONICAL_TIME_BASE)),
-            start_time: None,
-            bit_rate: None,
-            metadata: Metadata::new(),
-        };
-        let r = header_to_probe_result(&header, "D:/a/clip.mp4").unwrap();
-        assert_eq!(r.kind, "video");
-        assert_eq!(r.width, 320);
-        assert_eq!(r.height, 240);
-        assert!((r.fps - 25.0).abs() < 1e-9, "fps={}", r.fps);
-        assert!(r.has_audio);
-        assert_eq!(r.duration_us, 2_000_000);
-    }
-
-    /// 坑③：帧数与流时长都缺失 → fps=0（等价 ffprobe 侧 avg/r 都拿不到）。
-    /// 坑④：容器时长 None → duration=0（ye read_header 已做过各轨最大值，
-    /// 轨道也缺时长才会到这）。
-    #[test]
-    fn ye头信息_帧率时长缺失退零() {
-        let mut s = ye_video_stream(0);
-        s.duration = None;
-        s.nb_frames = None;
-        let header = MediaHeader {
-            format_name: "mp4".to_string(),
-            streams: vec![s],
+            streams,
             duration: None,
             start_time: None,
             bit_rate: None,
             metadata: Metadata::new(),
-        };
-        let r = header_to_probe_result(&header, "D:/a/v.mp4").unwrap();
-        assert_eq!(r.kind, "video");
-        assert_eq!(r.fps, 0.0);
-        assert_eq!(r.duration_us, 0);
-        assert!(!r.has_audio);
+        }
     }
 
-    /// 坑②对齐：ftyp 命中进 ye、但扩展名是图片 → 仍判 image 且零时长
-    /// （与 ffprobe 路径共用 classify_media_kind，次序一致）。
-    #[test]
-    fn ye头信息_扩展名优先判图片() {
-        let header = MediaHeader {
-            format_name: "mp4".to_string(),
-            streams: vec![ye_video_stream(0)],
-            duration: Some(Timestamp::new(7_056_000, CANONICAL_TIME_BASE)),
-            start_time: None,
-            bit_rate: None,
-            metadata: Metadata::new(),
-        };
-        let r = header_to_probe_result(&header, "D:/a/pic.png").unwrap();
-        assert_eq!(r.kind, "image");
-        assert_eq!(r.duration_us, 0);
-        assert_eq!(r.fps, 0.0);
-        assert_eq!(r.width, 320); // 画幅仍带出，供前端缩略图用
-    }
-
-    /// 帧率优先用容器给的 frame_rate（当前 mp4 reader 恒 None，此处锁语义：
-    /// 一旦 ye 开始填，立即优先生效，不再走近似）。
-    #[test]
-    fn ye头信息_frame_rate参数优先于近似() {
-        let mut s = ye_video_stream(0);
-        s.codec.video = Some(VideoParams {
+    fn video_params() -> Option<VideoParams> {
+        Some(VideoParams {
             width: 320,
             height: 240,
             pixel_format: None,
-            frame_rate: Some(Rational::new(30000, 1001)),
+            frame_rate: None, // mp4 读侧恒 None，帧率靠样本数/时长推
+        })
+    }
+
+    #[test]
+    fn 封面启发式_多条视频流命中() {
+        // 真实内容视频 + 封面缩略图的组合形状，无音频也命中
+        let h = header_of(vec![
+            stream_of(MediaType::Video, Some(3_000_000), Some(90), video_params()),
+            stream_of(MediaType::Video, Some(0), Some(1), video_params()),
+        ]);
+        assert!(suspected_cover(&h));
+    }
+
+    #[test]
+    fn 封面启发式_纯视频不命中() {
+        // vec.mp4 形状：单视频 3s、无音频——auto 应走 ye 轨
+        let h = header_of(vec![stream_of(
+            MediaType::Video,
+            Some(3_000_000),
+            Some(90),
+            video_params(),
+        )]);
+        assert!(!suspected_cover(&h));
+    }
+
+    #[test]
+    fn 封面启发式_音频加短视频按比例命中() {
+        // 2s 音频 × 5% = 0.1s 上限；40ms 封面 < 0.1s → 命中
+        let h = header_of(vec![
+            stream_of(MediaType::Audio, Some(2_000_000), None, None),
+            stream_of(MediaType::Video, Some(40_000), Some(1), video_params()),
+        ]);
+        assert!(suspected_cover(&h));
+    }
+
+    #[test]
+    fn 封面启发式_音频加正常短视频不命中() {
+        // 2s 音频配 0.15s 真实视频（> 0.1s 阈值）、多帧——不误伤
+        let h = header_of(vec![
+            stream_of(MediaType::Audio, Some(2_000_000), None, None),
+            stream_of(MediaType::Video, Some(150_000), Some(5), video_params()),
+        ]);
+        assert!(!suspected_cover(&h));
+    }
+
+    #[test]
+    fn 封面启发式_长音频按1秒上限() {
+        // 40s 音频 × 5% = 2s → min(1s, 2s) = 1s 上限：0.5s 视频命中、1.5s 不命中
+        let short = header_of(vec![
+            stream_of(MediaType::Audio, Some(40_000_000), None, None),
+            stream_of(MediaType::Video, Some(500_000), Some(15), video_params()),
+        ]);
+        assert!(suspected_cover(&short));
+        let long = header_of(vec![
+            stream_of(MediaType::Audio, Some(40_000_000), None, None),
+            stream_of(MediaType::Video, Some(1_500_000), Some(45), video_params()),
+        ]);
+        assert!(!suspected_cover(&long));
+    }
+
+    #[test]
+    fn 封面启发式_单帧流兜底命中() {
+        // 个别封装把封面轨时长写成与音频等长（时长判据失效），nb_frames=1 兜底
+        let h = header_of(vec![
+            stream_of(MediaType::Audio, Some(2_000_000), None, None),
+            stream_of(MediaType::Video, Some(2_000_000), Some(1), video_params()),
+        ]);
+        assert!(suspected_cover(&h));
+        // 时长缺失 + 单帧，同样命中
+        let no_dur = header_of(vec![
+            stream_of(MediaType::Audio, Some(2_000_000), None, None),
+            stream_of(MediaType::Video, None, Some(1), video_params()),
+        ]);
+        assert!(suspected_cover(&no_dur));
+    }
+
+    #[test]
+    fn 封面启发式_纯音频mp4整体回退() {
+        // ③ covr 盲区兜底：mp4 家族 attached_pic 封面不是 trak，ye 头里
+        // 只剩音频流（vec-cover.m4a 实测形状）——判疑似，回退权威轨。
+        let h = header_of(vec![stream_of(
+            MediaType::Audio,
+            Some(2_000_000),
+            None,
+            None,
+        )]);
+        assert!(suspected_cover(&h));
+    }
+
+    #[test]
+    fn ye摘要_帧率由样本数与流时长推导() {
+        // mp4 读侧 frame_rate 恒 None：90 帧 / 3s = 30fps；宽高取 stsd
+        let mut stream = stream_of(MediaType::Video, Some(3_000_000), Some(90), video_params());
+        stream.codec.codec = CodecId::H264;
+        let h = header_of(vec![stream]);
+        let s = summarize_ye_header(&h);
+        assert_eq!(s.width, 320);
+        assert_eq!(s.height, 240);
+        assert!((s.fps - 30.0).abs() < 1e-9);
+        assert_eq!(s.video_codec, "h264");
+        assert!(!s.has_audio);
+        // 零时长/零帧不推帧率（保持 0，不造数）
+        let degenerate = header_of(vec![stream_of(
+            MediaType::Video,
+            Some(0),
+            Some(1),
+            video_params(),
+        )]);
+        assert_eq!(summarize_ye_header(&degenerate).fps, 0.0);
+    }
+
+    #[test]
+    fn ye摘要_音频参数取自流布局() {
+        // AAC 立体声 44.1k：codec 名对齐 ffprobe 命名，声道经默认布局保全
+        let mut audio = stream_of(MediaType::Audio, Some(2_000_000), None, None);
+        audio.codec.codec = CodecId::Aac;
+        audio.codec.audio = Some(ye::codec::AudioParams {
+            sample_rate: 44_100,
+            channel_layout: Some(ye::pixfmt::ChannelLayout::STEREO),
+            sample_format: None,
         });
-        let header = MediaHeader {
-            format_name: "mp4".to_string(),
-            streams: vec![s],
-            duration: Some(Timestamp::new(2 * 7_056_000, CANONICAL_TIME_BASE)),
-            start_time: None,
-            bit_rate: None,
-            metadata: Metadata::new(),
+        let s = summarize_ye_header(&header_of(vec![audio]));
+        assert_eq!(s.audio_codec, "aac");
+        assert_eq!(s.sample_rate, 44_100);
+        assert_eq!(s.channels, 2);
+    }
+
+    // ---- 双引擎对拍向量（施工图 §3.1 配方写死）----
+    // 运行前置：ffmpeg/ffprobe 须可定位——ffprobe 轨走生产解析器
+    // （ffmpeg_info：BJ_FFMPEG_DIR → sidecar → PATH），向量生成走本模块
+    // 定位器（BJ_FFMPEG_DIR → PATH → 仓相对 ../../duan/src-tauri/binaries，
+    // 施工图 §2.5 口径）。本机把 duan/src-tauri/binaries 加进 PATH 即全中。
+    // 工具缺席一律判失败（panic），不假绿跳过；jian CI 只跑 cargo check，
+    // 不跑本组测试。
+
+    /// 定位 ffmpeg/ffprobe 所在目录；全落空 → panic（测试失败）。
+    fn locate_binaries_dir() -> PathBuf {
+        let exe = |name: &str| {
+            if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.to_string()
+            }
         };
-        let r = header_to_probe_result(&header, "D:/a/ntsc.mp4").unwrap();
-        assert!((r.fps - 30000.0 / 1001.0).abs() < 1e-9, "fps={}", r.fps);
-    }
-
-    /// 嗅探失败（文件不存在）不 panic、返回 Err；probe_media 会转走 ffprobe。
-    #[test]
-    fn ftyp嗅探_文件不存在() {
-        let err = sniff_is_mp4_family("Z:/definitely/not/exist.mp4").unwrap_err();
-        assert!(err.kind() == std::io::ErrorKind::NotFound);
-    }
-
-    // ---- 对拍：ye vs ffprobe（PATH 无 ffmpeg 自动 skip） ----
-
-    /// ye CodecId → ffprobe codec_name（对拍用映射，两边命名对齐）。
-    fn codec_id_to_ffprobe_name(c: CodecId) -> &'static str {
-        match c {
-            CodecId::H264 => "h264",
-            CodecId::Hevc => "hevc",
-            CodecId::Av1 => "av1",
-            CodecId::Vp9 => "vp9",
-            CodecId::Aac => "aac",
-            CodecId::Flac => "flac",
-            CodecId::Opus => "opus",
-            CodecId::Mp3 => "mp3",
-            CodecId::Unknown => "unknown",
-        }
-    }
-
-    /// 用 PATH 里的 ffmpeg 生成小 MP4（320x240 25fps 2s 视频 + 44.1kHz 立体声
-    /// 音频），ye 与 ffprobe 双跑 probe，断言关键字段一致。
-    /// ProbeResult 层比 kind/宽高/音频/帧率/时长；编解码与采样率 ProbeResult
-    /// 没有字段，在两引擎原始结构（MediaHeader vs ffprobe JSON）上比。
-    /// 流数（去掉 ffprobe 可能多报的 timed_id3 数据流后）逐流对齐。
-    #[test]
-    fn 对拍_ye与ffprobe_小mp4关键字段一致() {
-        // 缺 ffmpeg 自动 skip（ask 约定）
-        let Ok(probe) = std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .output()
-        else {
-            eprintln!("skip：PATH 里没有 ffmpeg");
-            return;
-        };
-        if !probe.status.success() {
-            eprintln!("skip：ffmpeg -version 不可用");
-            return;
-        }
-
-        let dir = std::env::temp_dir().join(format!("jian-probe-parity-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("建临时目录");
-        let mp4 = dir.join("parity.mp4");
-        // 三输入：视频 + 音频 + 单帧封面（color 源造 1 帧，编 mjpeg、
-        // disposition attached_pic——mp4 muxer 把它写成 moov 元数据 covr 盒，
-        // ffprobe 读回时重新表面化为 attached_pic=1 的 mjpeg 流，ye 只解析
-        // trak 轨道不报它：对拍的流数断言因此按「内容流」对齐并显式
-        // 过滤 ffprobe 侧的封面流——若未来 ye 把 covr 暴露成流，ye 侧
-        // 会多出一条，本测试即顶出差异（2026-10-24 评审：夹具此前没有
-        // 封面，该兜底承诺落空）。
-        let gen_out = std::process::Command::new("ffmpeg")
-            .args(["-y", "-hide_banner", "-loglevel", "error"])
-            .args([
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc2=size=320x240:rate=25:duration=2",
-            ])
-            .args([
-                "-f",
-                "lavfi",
-                "-i",
-                "sine=frequency=440:sample_rate=44100:duration=2",
-            ])
-            .args([
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=red:size=320x240:rate=1:duration=1",
-            ])
-            .args(["-map", "0:v", "-map", "1:a", "-map", "2:v"])
-            .args([
-                "-c:v:0",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-pix_fmt",
-                "yuv420p",
-            ])
-            .args(["-c:a", "aac", "-ac", "2"])
-            .args(["-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"])
-            .arg(&mp4)
-            .output()
-            .expect("spawn ffmpeg");
-        assert!(
-            gen_out.status.success(),
-            "ffmpeg 生成含封面小 MP4 失败：{}",
-            String::from_utf8_lossy(&gen_out.stderr)
-        );
-        let path = mp4.to_str().unwrap();
-
-        // 双引擎各跑各的（不经 probe_media 路由——对拍测的是引擎本身）
-        let (_, header) = run_ye_probe(path).expect("ye probe 应成功");
-        let ye_r = header_to_probe_result(&header, path).expect("ye 解析应成功");
-        let ff_json = run_ffprobe_json(path).expect("ffprobe 应成功");
-        let ff_r = parse_probe_json(&ff_json, path).expect("ffprobe 解析应成功");
-
-        // —— ProbeResult 层 ——
-        assert_eq!(
-            ye_r.kind, ff_r.kind,
-            "kind：ye={} ff={}",
-            ye_r.kind, ff_r.kind
-        );
-        assert_eq!(ye_r.width, ff_r.width, "width");
-        assert_eq!(ye_r.height, ff_r.height, "height");
-        assert_eq!(ye_r.has_audio, ff_r.has_audio, "has_audio");
-        assert!(
-            (ye_r.fps - ff_r.fps).abs() < 0.5,
-            "fps：ye={} ff={}",
-            ye_r.fps,
-            ff_r.fps
-        );
-        assert!(
-            (ye_r.duration_us - ff_r.duration_us).abs() <= 50_000,
-            "duration：ye={}µs ff={}µs（差 {}µs）",
-            ye_r.duration_us,
-            ff_r.duration_us,
-            (ye_r.duration_us - ff_r.duration_us).abs()
-        );
-
-        // —— 原始结构层：编解码、采样率、流数 ——
-        let ff_streams: Vec<Value> = ff_json["streams"].as_array().cloned().unwrap_or_default();
-        // 夹具须真的带封面（attached_pic=1 的 mjpeg 流）——否则下面的
-        // 封面过滤分支是死代码，兜底承诺再次落空。
-        assert!(
-            ff_streams
-                .iter()
-                .any(|s| s["disposition"]["attached_pic"].as_i64() == Some(1)),
-            "夹具应含 attached_pic 封面流"
-        );
-        // ffprobe 对 ffmpeg 产物可能多报：①timed_id3 数据流（写 metadata
-        // 的副产物）；②封面流（mov demuxer 把 moov 里的 covr 盒重新表面
-        // 化为 attached_pic=1 的视频流，ye 只解析 trak 不报）。两者都按
-        // 「内容流」对齐剔除——ye 若未来把 covr 暴露成流，ye 侧会多出
-        // 一条，此断言即顶出差异。
-        let ff_content: Vec<&Value> = ff_streams
-            .iter()
-            .filter(|s| {
-                matches!(s["codec_type"].as_str(), Some("video") | Some("audio"))
-                    && s["disposition"]["attached_pic"].as_i64() != Some(1)
-            })
-            .collect();
-        let ye_content: Vec<&Stream> = header
-            .streams
-            .iter()
-            .filter(|s| matches!(s.media_type, MediaType::Video | MediaType::Audio))
-            .collect();
-        assert_eq!(
-            ye_content.len(),
-            ff_content.len(),
-            "流数：ye={} ff={}",
-            ye_content.len(),
-            ff_content.len()
-        );
-        for (y, f) in ye_content.iter().zip(ff_content.iter()) {
-            let y_name = codec_id_to_ffprobe_name(y.codec.codec);
-            let f_name = f["codec_name"].as_str().unwrap_or("<null>");
-            assert_eq!(y_name, f_name, "编解码：ye={y_name} ff={f_name}");
-            if y.media_type == MediaType::Audio {
-                let y_sr = y.codec.audio.as_ref().map(|a| a.sample_rate);
-                let f_sr = f["sample_rate"]
-                    .as_str()
-                    .and_then(|s| s.parse::<u32>().ok());
-                assert_eq!(y_sr, f_sr, "采样率：ye={y_sr:?} ff={f_sr:?}");
+        let has_pair =
+            |dir: &Path| dir.join(exe("ffmpeg")).is_file() && dir.join(exe("ffprobe")).is_file();
+        if let Some(dir) = std::env::var_os("BJ_FFMPEG_DIR").map(PathBuf::from) {
+            if has_pair(&dir) {
+                return dir;
             }
         }
-        // 视频宽高在原始层再核一遍（防两引擎适配层各自吃错又恰好相等的巧合）
-        let ye_v = ye_content.iter().find(|s| s.media_type == MediaType::Video);
-        let ff_v = ff_content.iter().find(|s| s["codec_type"] == "video");
-        if let (Some(y), Some(f)) = (ye_v, ff_v) {
-            assert_eq!(
-                y.codec.video.as_ref().unwrap().width,
-                f["width"].as_u64().unwrap() as u32
-            );
-            assert_eq!(
-                y.codec.video.as_ref().unwrap().height,
-                f["height"].as_u64().unwrap() as u32
-            );
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                if has_pair(&dir) {
+                    return dir;
+                }
+            }
         }
-
-        // —— 路由层：probe_media 对该文件应走 ye 且成功 ——
-        let routed = probe_media(mp4.to_string_lossy().into_owned()).expect("probe_media 应成功");
-        assert_eq!(routed.kind, "video");
-        assert_eq!(routed.width, 320);
-
-        let _ = std::fs::remove_dir_all(&dir);
+        let repo_relative =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../duan/src-tauri/binaries");
+        if has_pair(&repo_relative) {
+            return repo_relative;
+        }
+        panic!(
+            "找不到 ffmpeg/ffprobe（已试 BJ_FFMPEG_DIR、PATH、../../duan/src-tauri/binaries）；\
+             对拍测试工具缺席判失败，不跳过"
+        );
     }
+
+    /// 跑 ffmpeg 生成一条向量；非零退出即 panic（向量生成失败＝测试失败，不许跳过）。
+    fn run_ffmpeg(ffmpeg: &Path, args: &[&str], out: &Path) {
+        let mut cmd = std::process::Command::new(ffmpeg);
+        cmd.arg("-v").arg("error");
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.arg(out);
+        let result = cmd
+            .output()
+            .unwrap_or_else(|e| panic!("启动 ffmpeg 失败: {e}"));
+        assert!(
+            result.status.success(),
+            "生成向量失败（{}）: {}",
+            out.display(),
+            stderr_tail(&result.stderr)
+        );
+    }
+
+    /// 生成全套对拍向量（进程内一次，lavfi 确定性源；配方施工图 §3.1）。
+    /// 返回向量目录：vec.mp4 / vec-audio.m4a / cover.jpg / vec-cover.m4a。
+    fn ensure_vectors() -> PathBuf {
+        static DIR: OnceLock<PathBuf> = OnceLock::new();
+        DIR.get_or_init(|| {
+            let ffmpeg = locate_binaries_dir().join(if cfg!(windows) {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            });
+            let dir = std::env::temp_dir().join(format!("jian-probe-vec-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).expect("创建向量目录失败");
+            // 视频：3s 320x240 30fps H.264 Baseline（ye 解码面与 probe 双轨共用口径）
+            run_ffmpeg(
+                &ffmpeg,
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=duration=3:size=320x240:rate=30",
+                    "-c:v",
+                    "libx264",
+                    "-profile:v",
+                    "baseline",
+                    "-pix_fmt",
+                    "yuv420p",
+                ],
+                &dir.join("vec.mp4"),
+            );
+            // 音频：2s 立体声正弦 48k AAC
+            run_ffmpeg(
+                &ffmpeg,
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=48000:duration=2",
+                    "-ac",
+                    "2",
+                    "-c:a",
+                    "aac",
+                    "-aac_pns",
+                    "0",
+                    "-b:a",
+                    "128k",
+                ],
+                &dir.join("vec-audio.m4a"),
+            );
+            // 封面 jpg（单帧）
+            run_ffmpeg(
+                &ffmpeg,
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=320x240:rate=1",
+                    "-frames:v",
+                    "1",
+                ],
+                &dir.join("cover.jpg"),
+            );
+            // 带封面 m4a：音频 + mjpeg 封面轨（disposition attached_pic）
+            run_ffmpeg(
+                &ffmpeg,
+                &[
+                    "-i",
+                    dir.join("vec-audio.m4a").to_str().unwrap(),
+                    "-i",
+                    dir.join("cover.jpg").to_str().unwrap(),
+                    "-map",
+                    "0:a",
+                    "-map",
+                    "1:v",
+                    "-c:v",
+                    "mjpeg",
+                    "-disposition:v:0",
+                    "attached_pic",
+                ],
+                &dir.join("vec-cover.m4a"),
+            );
+            dir
+        })
+        .clone()
+    }
+
+    fn probe(path: &Path, engine: Option<&str>) -> Result<ProbeResult, String> {
+        probe_media(
+            path.to_string_lossy().into_owned(),
+            engine.map(|e| e.to_string()),
+        )
+    }
+
+    // 验收 ①：mp4 向量双轨判等——宽高/hasAudio/kind 精确等；durationUs
+    // 容差 1000µs（容器 timescale 换算来源不同）；fps 相对差 ≤ 1e-3
+    // （ye 由样本数/时长推导，ffprobe 取 avg_frame_rate）。
+    #[test]
+    fn mp4向量ye轨与ffprobe轨判等() {
+        let dir = ensure_vectors();
+        let ye_res = probe(&dir.join("vec.mp4"), Some("ye")).expect("ye 轨应成功");
+        let ff_res = probe(&dir.join("vec.mp4"), Some("ffmpeg")).expect("ffmpeg 轨应成功");
+        assert_eq!(ye_res.used_engine, "ye");
+        assert_eq!(ff_res.used_engine, "ffmpeg");
+        assert_eq!(ye_res.width, ff_res.width);
+        assert_eq!(ye_res.height, ff_res.height);
+        assert_eq!(ye_res.has_audio, ff_res.has_audio);
+        assert_eq!(ye_res.kind, ff_res.kind);
+        assert!(
+            (ye_res.duration_us - ff_res.duration_us).abs() <= 1000,
+            "durationUs 超容差：ye={} ffprobe={}",
+            ye_res.duration_us,
+            ff_res.duration_us
+        );
+        let ff_fps = ff_res.fps;
+        assert!(ff_fps > 0.0);
+        let rel = ((ye_res.fps - ff_fps) / ff_fps).abs();
+        assert!(
+            rel <= 1e-3,
+            "fps 相对差超容差：ye={} ffprobe={}",
+            ye_res.fps,
+            ff_fps
+        );
+    }
+
+    // 验收 ②：带封面 m4a（attached_pic 向量）启发式命中 → 整体回退
+    // ffprobe；结果与显式 ffmpeg 轨完全一致，kind=audio 不误报 video。
+    // 实测（2026-10-27）：mp4 家族的 attached_pic 封面写在 moov.udta.meta
+    // 的 covr 原子而非 trak——ye 头里看不到任何视频流，①② 无从命中，
+    // 由启发式③（covr 盲区兜底）触发回退。
+    #[test]
+    fn 带封面m4a启发式命中整体回退_ffprobe口径() {
+        let dir = ensure_vectors();
+        let m4a = dir.join("vec-cover.m4a");
+        // 证据锁定：ye 头只剩一条音频流（封面在 covr，ye 全盲），启发式
+        // 仍要命中（③），不是靠 ye Err 误打误撞回退：
+        let header = ye_header(m4a.to_string_lossy().as_ref()).expect("ye 应能读出封面 m4a 头");
+        assert_eq!(
+            header
+                .streams
+                .iter()
+                .filter(|st| st.media_type == MediaType::Video)
+                .count(),
+            0,
+            "covr 封面不应出现在 ye 头的流表里"
+        );
+        assert!(suspected_cover(&header), "封面向量应命中疑似封面启发式");
+        // ye 轨裸跑 kind 不误报（封面不可见），但时长含 AAC priming、
+        // 与权威轨有毫秒级分歧（实测 2026667µs vs 2000000µs）——回退动机：
+        let raw_ye = probe(&m4a, Some("ye")).expect("显式 ye 应成功（读头不解码）");
+        assert_eq!(raw_ye.kind, "audio");
+        let explicit = probe(&m4a, Some("ffmpeg")).expect("显式 ffmpeg 应成功");
+        assert_ne!(raw_ye.duration_us, explicit.duration_us);
+        // auto：回退后与显式 ffmpeg 轨逐字段完全一致
+        let auto = probe(&m4a, None).expect("auto 应经回退成功");
+        assert_eq!(auto.used_engine, "ffmpeg");
+        assert_eq!(auto.kind, "audio"); // 不误报 video
+        assert_eq!(auto.duration_us, explicit.duration_us);
+        assert_eq!(auto.width, explicit.width);
+        assert_eq!(auto.height, explicit.height);
+        assert_eq!(auto.fps, explicit.fps);
+        assert_eq!(auto.has_audio, explicit.has_audio);
+    }
+
+    // 验收 ③：非 mp4 素材（jpg）auto 落 ffprobe 轨且 usedEngine=ffmpeg。
+    #[test]
+    fn 非mp4素材auto落ffprobe轨() {
+        let dir = ensure_vectors();
+        let jpg = dir.join("cover.jpg");
+        let r = probe(&jpg, None).expect("jpg 应经 ffprobe 轨成功");
+        assert_eq!(r.used_engine, "ffmpeg");
+        assert_eq!(r.kind, "image");
+        assert_eq!(r.duration_us, 0);
+        assert_eq!(r.fps, 0.0);
+    }
+
+    // 验收 ④：显式 engine=ffmpeg 不触 ye——同一 mp4 上 auto 落 ye、显式
+    // ffmpeg 落 ffprobe（usedEngine 由产出轨盖章：若显式请求误走 ye 轨，
+    // 此处会得到 "ye" 而翻车）。
+    #[test]
+    fn 显式ffmpeg引擎不触ye轨() {
+        let dir = ensure_vectors();
+        let mp4 = dir.join("vec.mp4");
+        assert_eq!(probe(&mp4, None).unwrap().used_engine, "ye");
+        assert_eq!(probe(&mp4, Some("ffmpeg")).unwrap().used_engine, "ffmpeg");
+    }
+}
+
+fn head_is_mp4_family(head: &[u8]) -> bool {
+    if head.len() < 8 {
+        return false;
+    }
+    let size = u32::from_be_bytes(head[0..4].try_into().unwrap()) as u64;
+    size >= 8 && (&head[4..8] == b"ftyp" || &head[4..8] == b"styp")
+}
+
+/// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
+/// 与 waveform.rs（波形引擎路由）共用本判定。
+pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut head = [0u8; 8];
+    let mut filled = 0usize;
+    while filled < head.len() {
+        let n = file.read(&mut head[filled..])?;
+        if n == 0 {
+            break; // EOF：短文件按已读部分判
+        }
+        filled += n;
+    }
+    Ok(head_is_mp4_family(&head[..filled]))
 }

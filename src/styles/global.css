@@ -132,6 +132,20 @@ body {
   color: var(--fang-color-danger);
 }
 
+/* 引擎切换（M4 接线轨，duan 同款形态）：导出中禁用置灰 */
+.top-bar__engine {
+  font-size: var(--fang-font-size-xs);
+  color: var(--fang-color-text-muted);
+  background: transparent;
+  border: 1px solid var(--fang-color-border);
+  border-radius: var(--fang-radius-sm);
+  padding: 2px 6px;
+}
+
+.top-bar__engine:disabled {
+  opacity: 0.5;
+}
+
 /* —— 素材池 —— */
 .media-bin {
   display: flex;
