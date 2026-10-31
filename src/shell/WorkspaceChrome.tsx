@@ -45,7 +45,9 @@ export function ToolRail() {
 }
 
 export function ToolOptions() {
-  const { tool, controls, zoom } = useWorkspace();
+  const tool = useWorkspace(s=>s.tool);
+  const controls = useWorkspace(s=>s.controls);
+  const zoom = useWorkspace(s=>s.zoom);
   const sequence = useProjectStore(selectActiveSequence);
   const selection = useProjectStore((s) => s.selection);
   const picked = sequence.tracks.flatMap((track) => track.clips.map((clip) => ({ clip, track }))).find(({ clip }) => selection.length === 1 && clip.id === selection[0]);

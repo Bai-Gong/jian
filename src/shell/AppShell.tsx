@@ -16,7 +16,9 @@ import "./workspace.css";
 export function AppShell() {
   useEffect(()=>{void loadRuntime();},[]);
   const exportError=useProjectStore((s)=>s.exportState.error);
-  const { panel, rightWidth, timelineHeight } = useWorkspace();
+  const panel = useWorkspace(s=>s.panel);
+  const rightWidth = useWorkspace(s=>s.rightWidth);
+  const timelineHeight = useWorkspace(s=>s.timelineHeight);
   return (
     <ThemeProvider>
       <div className="app-shell ps-workspace" style={{ "--right-width": `${rightWidth}px`, "--timeline-height": `${timelineHeight}px` } as CSSProperties}>

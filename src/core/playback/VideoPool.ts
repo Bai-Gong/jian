@@ -55,6 +55,7 @@ export class VideoPool {
   entries(): IterableIterator<[string, HTMLVideoElement | HTMLImageElement]> { return this.elements.entries(); }
   setMasterMuted(muted: boolean): void { this.masterMuted = muted; if (this.master) this.master.gain.value = muted ? 0 : 1; }
   setSelection(ids:readonly string[]):void {this.selected=new Set(ids);this.draw();}
+  refresh():void {this.draw();}
   pauseAll(): void {
     for (const el of this.elements.values()) if (el instanceof HTMLVideoElement) el.pause();
     for (const route of this.routes.values()) { route.left.gain.value = 0; route.right.gain.value = 0; }
@@ -116,6 +117,7 @@ export class VideoPool {
       context.rotate(layer.rotation * Math.PI / 180); context.scale(layer.scale, layer.scale); context.globalAlpha = layer.opacity;
       context.drawImage(el, -w / 2, -h / 2, w, h); context.restore();
     }
+    if(this.canvas.clientWidth<2)return;
     for(const layer of desc.videoLayers.filter((l)=>this.selected.has(l.clipId))) {
       const el=this.elements.get(layer.clipId);if(!el)continue;
       const [w,h]=el instanceof HTMLVideoElement?[el.videoWidth,el.videoHeight]:[el.naturalWidth,el.naturalHeight];if(!w || !h || layer.scale<=0)continue;

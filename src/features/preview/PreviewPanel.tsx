@@ -1,5 +1,5 @@
 /** WebView 解码、Canvas 合成；工具与视图变换不写入工程。 */
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Film, Upload } from "lucide-react";
 import { useProjectStore, selectActiveSequence } from "../../core/project/store";
 import { videoPool } from "../../core/playback/VideoPool";
@@ -34,10 +34,13 @@ export function PreviewPanel() {
   useEffect(()=>{
     const stage=stageRef.current;if(!stage)return;
     videoPool.mount(stage);
+    const state=useProjectStore.getState(),sequence=selectActiveSequence(state);
+    videoPool.sync(buildFrameDescription(sequence,state.playheadUs,state.document.assets),state.document.assets,sequence.width,sequence.height,state.isPlaying);
     const report=(event:Event)=>setError(String((event as CustomEvent).detail));
     stage.addEventListener("preview-error",report);
     return()=>{stage.removeEventListener("preview-error",report);videoPool.unmount();};
   },[]);
+  useLayoutEffect(()=>{videoPool.refresh();},[fit.width,fit.height]);
   const point=(event:ReactPointerEvent)=>{
     const rect=stageRef.current!.getBoundingClientRect();
     return [(event.clientX-rect.left)*width/rect.width,(event.clientY-rect.top)*height/rect.height] as const;

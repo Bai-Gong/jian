@@ -113,3 +113,6 @@
 .ps-workspace .timeline-clip--video { background: color-mix(in srgb,var(--workspace-video) 65%,var(--fang-color-bg)); border-color: var(--workspace-video); }
 .ps-workspace .timeline-clip--audio { background: color-mix(in srgb,var(--workspace-audio) 65%,var(--fang-color-bg)); border-color: var(--workspace-audio); }
 .ps-workspace .timeline-clip.is-selected { border-color: var(--fang-color-accent); background: var(--workspace-selected); }
+
+.ps-workspace { user-select: none; }
+.ps-workspace input, .ps-workspace textarea, .ps-workspace .export-errors pre { user-select: text; }
