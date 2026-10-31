@@ -301,3 +301,31 @@ it("retains the prior engine choice when migrating to the pure runtime",async()=
   expect(state().exportEngine).toBe("ye");expect(state().legacyEngine).toBe("ffmpeg");
 });
 
+
+
+describe("按源音轨拆分并自动建轨",()=>{
+  function multitrack(n=5){const asset=makeAsset("video");asset.audioStreams=Array.from({length:n},(_,i)=>({index:i+1,name:`音轨 ${i+1}`,codec:"aac",sampleRate:48000,channels:2,startUs:0,endUs:asset.durationUs}));state().addAssets([asset]);return asset;}
+  it("五条立体声音轨只建五个音频轨，起点和区间与视频相同",()=>{
+    const asset=multitrack();state().insertMedia(asset.id,1250000);
+    const seq=selectActiveSequence(state()),video=seq.tracks.find(t=>t.kind==="video")!.clips[0],audio=seq.tracks.filter(t=>t.kind==="audio");
+    expect(audio).toHaveLength(5);expect(audio.map(t=>t.clips[0].sourceStreamIndex)).toEqual([1,2,3,4,5]);expect(video.audioDetached).toBe(true);
+    for(const t of audio){expect(t.clips[0].timelineStartUs).toBe(video.timelineStartUs);expect(t.clips[0].sourceOutUs).toBe(video.sourceOutUs);}
+  });
+  it("连续片段复用空闲音轨，重叠插入新增轨且不推移已存在的片段",()=>{
+    const asset=multitrack(2);state().insertMedia(asset.id,0);state().insertMedia(asset.id,asset.durationUs);
+    let seq=selectActiveSequence(state());expect(seq.tracks.filter(t=>t.kind==="audio")).toHaveLength(2);expect(seq.tracks.filter(t=>t.kind==="video")).toHaveLength(1);
+    state().insertMedia(asset.id,0);seq=selectActiveSequence(state());expect(seq.tracks.filter(t=>t.kind==="audio")).toHaveLength(4);expect(seq.tracks.filter(t=>t.kind==="video")).toHaveLength(2);
+    expect(seq.tracks[0].clips.map(c=>c.timelineStartUs)).toEqual([0,asset.durationUs]);
+  });
+  it("锁定轨不被写入；音频静音不会隐藏视频，视频也不重复产出伴音",async()=>{
+    const asset=multitrack(1);const originalAudio=selectActiveSequence(state()).tracks.find(t=>t.kind==="audio")!;state().toggleTrackLock(originalAudio.id);state().insertMedia(asset.id,0);
+    const seq=selectActiveSequence(state());expect(seq.tracks.find(t=>t.id===originalAudio.id)!.clips).toHaveLength(0);
+    const {evaluateSequence}=await import("../composite/composite");const ev=evaluateSequence(seq,state().document.assets);expect(ev.videoLayers).toHaveLength(1);expect(ev.audioLayers).toHaveLength(1);expect(ev.audioLayers[0].sourceStreamIndex).toBe(1);
+    const track=seq.tracks.find(t=>t.clips.some(c=>c.sourceStreamIndex===1))!;state().toggleTrackMute(track.id);
+    const muted=evaluateSequence(selectActiveSequence(state()),state().document.assets);expect(muted.videoLayers).toHaveLength(1);expect(muted.audioLayers).toHaveLength(0);
+  });
+  it("无声视频不制造音频片段，单音轨音频素材正常复用音频轨",()=>{
+    const silent=makeAsset("video");silent.hasAudio=false;silent.audioStreams=[];state().addAssets([silent]);state().insertMedia(silent.id,0);expect(selectActiveSequence(state()).tracks.filter(t=>t.kind==="audio").flatMap(t=>t.clips)).toHaveLength(0);
+    const audio=makeAsset("audio");audio.audioStreams=[{index:0,name:"音轨 1",codec:"aac",sampleRate:48000,channels:2,startUs:0,endUs:audio.durationUs}];state().addAssets([audio]);state().insertMedia(audio.id,0);expect(selectActiveSequence(state()).tracks.find(t=>t.kind==="audio")!.clips[0].sourceStreamIndex).toBe(0);
+  });
+});

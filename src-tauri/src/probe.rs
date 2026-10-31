@@ -40,10 +40,23 @@ const COVER_MAX_VIDEO_US: i64 = 1_000_000;
 /// 疑似封面启发式阈值：最长音频流时长 × 5%。
 const COVER_AUDIO_RATIO: f64 = 0.05;
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStreamInfo {
+    pub index: u32,
+    pub name: String,
+    pub codec: String,
+    pub sample_rate: u32,
+    pub channels: u32,
+    pub start_us: i64,
+    pub end_us: i64,
+}
+
 /// 探测结果（camelCase 序列化，对齐前端 MediaAsset 字段名）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {
+    pub audio_streams: Vec<AudioStreamInfo>,
     pub duration_us: i64,
     pub width: u32,
     pub height: u32,
@@ -169,6 +182,7 @@ fn classify_media_kind(
 /// 轨道无关的探测中间摘要：两轨各自把流/容器信息折算进来，口径收尾统一
 /// 走 [`finalize_summary`]——同源不分叉的载体。
 struct MediaSummary {
+    audio_streams: Vec<AudioStreamInfo>,
     has_video: bool,
     has_audio: bool,
     width: u32,
@@ -212,6 +226,7 @@ fn finalize_summary(s: MediaSummary, path: &str, used_engine: &str) -> Result<Pr
     };
 
     Ok(ProbeResult {
+        audio_streams: s.audio_streams,
         duration_us,
         width: s.width,
         height: s.height,
@@ -231,6 +246,7 @@ fn finalize_summary(s: MediaSummary, path: &str, used_engine: &str) -> Result<Pr
 fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
     let streams: Vec<Value> = v["streams"].as_array().cloned().unwrap_or_default();
     let mut s = MediaSummary {
+        audio_streams: Vec::new(),
         has_video: false,
         has_audio: false,
         width: 0,
@@ -250,6 +266,36 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
             .map(|sec| (sec * 1e6).round() as i64)
             .collect(),
     };
+    for (ordinal, st) in streams
+        .iter()
+        .filter(|st| st["codec_type"].as_str() == Some("audio"))
+        .enumerate()
+    {
+        let start = (st["start_time"]
+            .as_str()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            * 1e6)
+            .round() as i64;
+        let duration = st["duration"]
+            .as_str()
+            .and_then(|v| v.parse::<f64>().ok())
+            .map(|v| (v * 1e6).round() as i64)
+            .or(s.container_duration_us)
+            .unwrap_or(0);
+        s.audio_streams.push(AudioStreamInfo {
+            index: st["index"].as_u64().unwrap_or(ordinal as u64) as u32,
+            name: format!("音轨 {}", ordinal + 1),
+            codec: st["codec_name"].as_str().unwrap_or("").into(),
+            sample_rate: st["sample_rate"]
+                .as_str()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            channels: st["channels"].as_u64().unwrap_or(0) as u32,
+            start_us: start,
+            end_us: start.saturating_add(duration),
+        });
+    }
     // 画幅/帧率取第一条视频流；音频流只标记存在性
     for st in &streams {
         // 内嵌封面不算内容视频流：带封面的 mp3/m4a/flac 实测会多出一条
@@ -293,6 +339,7 @@ fn parse_probe_json(v: &Value, path: &str) -> Result<ProbeResult, String> {
 /// canonical 时长（mp4 读侧为各流时长最大值）。
 fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
     let mut s = MediaSummary {
+        audio_streams: Vec::new(),
         has_video: false,
         has_audio: false,
         width: 0,
@@ -309,6 +356,33 @@ fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
             .filter_map(|st| st.duration.map(timestamp_us))
             .collect(),
     };
+    for (ordinal, st) in header
+        .streams
+        .iter()
+        .filter(|st| st.media_type == MediaType::Audio)
+        .enumerate()
+    {
+        let start = st.start_time.map(timestamp_us).unwrap_or(0);
+        let duration = st
+            .duration
+            .map(timestamp_us)
+            .or(s.container_duration_us)
+            .unwrap_or(0);
+        s.audio_streams.push(AudioStreamInfo {
+            index: st.index,
+            name: format!("音轨 {}", ordinal + 1),
+            codec: codec_name(st.codec.codec),
+            sample_rate: st.codec.audio.as_ref().map_or(0, |a| a.sample_rate),
+            channels: st
+                .codec
+                .audio
+                .as_ref()
+                .and_then(|a| a.channel_layout)
+                .map_or(0, |l| l.channels()),
+            start_us: start,
+            end_us: start.saturating_add(duration),
+        });
+    }
     for st in &header.streams {
         match st.media_type {
             MediaType::Video if !s.has_video => {

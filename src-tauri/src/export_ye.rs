@@ -62,6 +62,8 @@ pub struct TimelineFeatureArg {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineLayerArg {
+    #[serde(default)]
+    pub stream_index: Option<u32>,
     pub path: String,
     pub source_in_us: i64,
     pub source_out_us: i64,
@@ -125,6 +127,7 @@ fn timeline_layer(
     input: Box<dyn ye::container::ReadSeek>,
 ) -> ye::timeline::TimelineClip {
     ye::timeline::TimelineClip {
+        stream_index: arg.stream_index,
         input,
         source_in_us: arg.source_in_us,
         source_out_us: arg.source_out_us,
@@ -208,15 +211,22 @@ pub fn timeline_issues(request: &TimelineRequest) -> Vec<String> {
             Err(e) => issues.push(format!("{}：{e}", c.path)),
             Ok(h) => {
                 let video = matches!(c.layer, TimelineLayerKind::Video { .. });
-                for issue in ye::media::validate_decoding(&h, &codecs, video, !video) {
-                    issues.push(format!("{}：{}", c.path, issue.reason));
-                }
                 let kind = if video {
                     ye::codec::MediaType::Video
                 } else {
                     ye::codec::MediaType::Audio
                 };
-                if let Some(stream) = h.streams.iter().find(|s| s.media_type == kind) {
+                let stream = match ye::timeline::select_stream(&h, kind, c.stream_index) {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        issues.push(format!("{}：{e}", c.path));
+                        continue;
+                    }
+                };
+                if let Err(e) = codecs.create_decoder(&stream.codec) {
+                    issues.push(format!("{}：{e}", c.path));
+                }
+                {
                     if !video
                         && stream
                             .codec

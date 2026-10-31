@@ -6,13 +6,14 @@
  * 前端不做引擎决策，只把调用方的显式选择原样传过去。
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { AssetKind } from "../project/types";
+import type { AssetKind, MediaAudioStream } from "../project/types";
 
 /** 探测引擎（与 Rust probe_media 的 engine 参数取值对齐）。 */
 export type ProbeEngine = "auto" | "ye" | "ffmpeg";
 
 /** 与 src-tauri ProbeResult 对齐（serde camelCase）。usedEngine 可选：旧后端不带该字段。 */
 export interface ProbeResult {
+  audioStreams?: MediaAudioStream[];
   durationUs: number;
   width: number;
   height: number;

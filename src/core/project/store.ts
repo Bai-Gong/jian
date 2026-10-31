@@ -49,6 +49,7 @@ export interface ProjectState {
   setExportEngine(engine: ExportEngine): void;
 
   addAssets(assets: MediaAsset[]): void;
+  insertMedia(assetId: string, timelineStartUs: number): void;
   /** 插同类组末位（命名 Vn/An 自增），返回新轨 id。 */
   addTrack(kind: TrackKind): string;
   /** 删轨并同步清掉 selection 中该轨的块。 */
@@ -107,6 +108,32 @@ export const useProjectStore = create<ProjectState>()(
     addAssets: (assets) => {
       if (assets.length === 0) return;
       set((s) => ({ document: { ...s.document, assets: [...s.document.assets, ...assets] } }));
+    },
+
+    insertMedia: (assetId, timelineStartUs) => {
+      const {document:doc}=get(), seq=activeSequenceOf(doc),asset=doc.assets.find(a=>a.id===assetId);
+      if(!seq||!asset||!Number.isFinite(timelineStartUs))return;
+      const start=Math.max(0,Math.round(timelineStartUs));
+      const length=asset.kind==="image"?DEFAULT_IMAGE_CLIP_US:asset.durationUs;
+      if(length<=0)return;
+      let tracks=[...seq.tracks];const selected:string[]=[];
+      const add=(kind:TrackKind,streamIndex?:number,sourceOutUs=length)=>{
+        if(sourceOutUs<=0)return;
+        const free=tracks.filter(t=>t.kind===kind&&!t.locked&&!t.clips.some(c=>c.timelineStartUs<start+sourceOutUs&&timelineOps.clipEndUs(c)>start));
+        let track=kind==="video"?free[free.length-1]:free[0];
+        if(!track){track=createTrack(kind,nextTrackName(tracks,kind));const at=tracks.map(t=>t.kind).lastIndexOf(kind)+1;tracks.splice(at,0,track);}
+        const clip=createClip({assetId,sourceInUs:0,sourceOutUs,timelineStartUs:start});
+        if(streamIndex!==undefined)clip.sourceStreamIndex=streamIndex;
+        if(kind==="video")clip.audioDetached=true;
+        tracks=tracks.map(t=>t.id===track.id?{...t,clips:timelineOps.insertClip(t.clips,clip)}:t);
+        selected.push(clip.id);
+      };
+      if(asset.kind!=="audio")add("video");
+      if(asset.hasAudio){
+        if(asset.audioStreams)for(const stream of asset.audioStreams)add("audio",stream.index,Math.min(length,stream.endUs));
+        else add("audio"); // 旧版单流元数据，执行前后端仍会拒绝歧义。
+      }
+      set({document:withTracks(doc,seq.id,tracks),selection:selected.slice(0,1)});
     },
 
     addTrack: (kind) => {

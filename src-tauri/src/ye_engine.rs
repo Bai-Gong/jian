@@ -1,21 +1,6 @@
-//! ye 进程内抽帧引擎：门面 [`ye::frame_grab::grab_frame_png`] 的命令封装
-//! （jian 缩略图双引擎轨）。
-//!
-//! 与 ffmpeg.rs 的 [`crate::ffmpeg::extract_frame`] 子进程轨构成「ye 优先、
-//! 失败回退」：ye 轨进程内解码无子进程开销；High/CABAC 等解码能力面外、
-//! 含不可解音轨打回（ye frame_grab 模块文档「音轨行为」）等**任何** Err
-//! 都由前端 thumbnail.ts console.warn 后回退 ffmpeg 轨——本模块错误文案
-//! 只述失败原因（能力面外原因原样透传），不声称已回退（回退动作归前端；
-//! 与 probe 轨 Rust 内回退的口径不同：抽帧两轨返回值同形（临时 png 路径），
-//! 回退放前端可让 warn 落在调用现场，ffmpeg 轨留作 oracle 与兜底）。
-//!
-//! 分层与 duan ye_engine.rs 同构：命令壳 [`extract_frame_ye`] 只转发；
-//! 抽帧主体在 [`extract_frame_ye_impl`]（纯库调用，不碰 Tauri 类型），
-//! pub 供单元测试直调。
-//!
-//! 临时 png 与 ffmpeg 轨同命名约定（%TEMP% 下 `jian-frame-{纳秒-计数}.png`，
-//! 见 ffmpeg.rs 的 extract_frame）；永不删除的跨会话堆积沿用 ffmpeg 轨
-//! 遗留（docs/待开发.md:29 T8 留档，双引擎后堆积翻倍，只记遗留不新增治理）。
+//! 纯冶抽帧：素材箱返回原尺寸临时 PNG，时间线返回尺寸受限的 PNG 字节。
+//! 只解码视频，忽略无关音轨；能力不足或损坏素材如实报错，不回退外部工具。
+//! 时间线不生成临时图片文件，前端负责可视窗口调度与有界缓存。
 
 use std::fs::File;
 use std::io::BufReader;
@@ -30,9 +15,7 @@ fn clamp_time_us(time_us: i64) -> i64 {
     time_us.max(0)
 }
 
-/// ye 轨错误文案（纯函数，供单测）：中文述因，携带素材路径与 ye 错误
-/// 原文（能力面外等原因原样透传）；不出现「回退」字样——回退动作归前端
-/// thumbnail.ts，文案声称已回退即与事实不符。
+/// 错误保留素材路径与冶的原始原因，不声称回退成功。
 fn ye_grab_error(path: &str, err: &ConvertError) -> String {
     format!("ye 抽帧失败（{path}）: {err}")
 }
@@ -40,9 +23,7 @@ fn ye_grab_error(path: &str, err: &ConvertError) -> String {
 /// 抽帧主体（纯库调用，不碰 Tauri 类型）：打开素材 → ye 门面取帧并编码
 /// PNG → 写 %TEMP% 下 `jian-frame-{纳秒-计数}.png` → 返回该文件绝对路径。
 ///
-/// 失败（打不开 / 解码能力面外 / 音轨打回 / 落盘失败）一律 Err 中文述因，
-/// 不兜底、不留半成品（落盘失败时 [`std::fs::write`] 未写出完整文件即返回，
-/// 无需另删）。
+/// 打开、视频解码或落盘失败时返回错误；写入失败只删除自有半成品。
 pub fn extract_frame_ye_impl(path: &Path, time_us: i64) -> Result<String, String> {
     let time_us = clamp_time_us(time_us);
     let file =
@@ -78,11 +59,37 @@ fn unique_token() -> String {
 }
 
 /// 抽帧（ye 引擎）：取 path 在 time_us 处的一帧，写成临时目录下的 PNG，
-/// 返回文件绝对路径。与 ffmpeg 轨 extract_frame 同入参同返回形状，前端
-/// 可无缝二选一；任何失败由前端回退 ffmpeg 轨（见模块文档）。
+/// 返回文件绝对路径；失败直接交给前端显示。
 #[tauri::command(async)]
 pub fn extract_frame_ye(path: String, time_us: i64) -> Result<String, String> {
     extract_frame_ye_impl(Path::new(&path), time_us)
+}
+
+/// Bounded in-memory filmstrip images: no full-resolution PNG or temporary file
+/// is retained for each visible cell. Audio streams do not participate in decode.
+pub fn timeline_thumbnail_impl(path: &Path, time_us: i64) -> Result<Vec<u8>, String> {
+    let file = File::open(path).map_err(|e| format!("无法打开视频（{}）：{e}", path.display()))?;
+    let frame = ye::frame_grab::decode_frame_rgba(Box::new(BufReader::new(file)), time_us)
+        .map_err(|e| ye_grab_error(&path.display().to_string(), &e))?;
+    let scale = (192.0 / frame.width as f64)
+        .min(96.0 / frame.height as f64)
+        .min(1.0);
+    let width = ((frame.width as f64 * scale).floor() as u32).max(1);
+    let height = ((frame.height as f64 * scale).floor() as u32).max(1);
+    let rgba = ye::filter::scale_rgba(
+        &frame.rgba,
+        frame.width as usize,
+        frame.height as usize,
+        width as usize,
+        height as usize,
+    )
+    .map_err(|e| format!("缩略图缩放失败：{e}"))?;
+    ye::png::encode_rgba(width, height, &rgba).map_err(|e| format!("缩略图编码失败：{e}"))
+}
+
+#[tauri::command(async)]
+pub fn timeline_thumbnail(path: String, time_us: i64) -> Result<Vec<u8>, String> {
+    timeline_thumbnail_impl(Path::new(&path), time_us)
 }
 
 #[cfg(test)]

@@ -46,6 +46,7 @@ export interface ResolvedEffect {
 
 /** 合成层描述：一个块在时间线上的一次「出场」，属性已解算成数值。 */
 export interface LayerDesc {
+  sourceStreamIndex?: number;
   clipId: string;
   trackId: string;
   assetId: string;
@@ -89,6 +90,7 @@ function describeLayer(clip: Clip, track: Track, asset: MediaAsset): LayerDesc {
   const t = clip.transform;
   return {
     clipId: clip.id,
+    ...(clip.sourceStreamIndex === undefined ? {} : {sourceStreamIndex:clip.sourceStreamIndex}),
     trackId: track.id,
     assetId: clip.assetId,
     timelineStartUs: clip.timelineStartUs,
@@ -144,7 +146,7 @@ export function evaluateSequence(sequence: Sequence, assets: readonly MediaAsset
     if (track.kind !== "video") continue;
     for (const clip of track.clips) {
       const asset = assetById.get(clip.assetId);
-      if (!asset || !asset.hasAudio) continue;
+      if (!asset || !asset.hasAudio || clip.audioDetached) continue;
       audioLayers.push(describeLayer(clip, track, asset));
     }
   }

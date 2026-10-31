@@ -7,6 +7,7 @@ export function buildYeTimelineParams(sequence: Sequence, assets: readonly Media
   const byId = new Map(assets.map((asset) => [asset.id, asset]));
   const window = (layer: LayerDesc) => ({
     path: byId.get(layer.assetId)?.path ?? "",
+    ...(layer.sourceStreamIndex === undefined ? {} : {streamIndex:layer.sourceStreamIndex}),
     sourceInUs: Math.round(layer.sourceInUs), sourceOutUs: Math.round(layer.sourceOutUs),
     timelineStartUs: Math.round(layer.timelineStartUs), timelineEndUs: Math.round(layer.timelineEndUs),
   });

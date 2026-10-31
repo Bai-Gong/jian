@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/ye
-          ref: e30724896b8bc8e645b86d1585bb51acdcfef6c1
+          ref: 0df39fcaf6e5a7c69f47ac57ac2bb4c2e056bfde
           path: ye
       - name: ye 挪到兄弟目录
         run: mv ye ../ye
@@ -92,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/ye
-          ref: e30724896b8bc8e645b86d1585bb51acdcfef6c1
+          ref: 0df39fcaf6e5a7c69f47ac57ac2bb4c2e056bfde
           path: ye
       - name: ye 挪到兄弟目录
         run: mv ye ../ye

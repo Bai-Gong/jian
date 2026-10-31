@@ -1,4 +1,5 @@
-//! Opt-in recording acceptance. Original multi-audio is preserved and explicitly blocked.
+//! Opt-in recording acceptance. Ambiguous audio without a source choice is blocked.
+//! See multitrack_recording for explicit source selection on the original file.
 use jian_lib::export_ye::{TimelineRequest, timeline_export_impl, timeline_issues};
 use serde_json::json;
 use std::{path::PathBuf, sync::atomic::AtomicBool};

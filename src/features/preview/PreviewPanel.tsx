@@ -16,6 +16,7 @@ export function PreviewPanel() {
   const drag = useRef<Drag | null>(null);
   const [fit,setFit] = useState({width:1,height:1});
   const [error,setError] = useState("");
+  const [status,setStatus] = useState("");
   const {tool,zoom,pan,controls} = useWorkspace();
   const selection=useProjectStore((s)=>s.selection);
   const width=useProjectStore((s)=>selectActiveSequence(s).width);
@@ -37,8 +38,9 @@ export function PreviewPanel() {
     const state=useProjectStore.getState(),sequence=selectActiveSequence(state);
     videoPool.sync(buildFrameDescription(sequence,state.playheadUs,state.document.assets),state.document.assets,sequence.width,sequence.height,state.isPlaying);
     const report=(event:Event)=>setError(String((event as CustomEvent).detail));
-    stage.addEventListener("preview-error",report);
-    return()=>{stage.removeEventListener("preview-error",report);videoPool.unmount();};
+    const statusReport=(event:Event)=>setStatus(String((event as CustomEvent).detail));
+    stage.addEventListener("preview-error",report);stage.addEventListener("preview-status",statusReport);
+    return()=>{stage.removeEventListener("preview-error",report);stage.removeEventListener("preview-status",statusReport);videoPool.unmount();};
   },[]);
   useLayoutEffect(()=>{videoPool.refresh();},[fit.width,fit.height]);
   const point=(event:ReactPointerEvent)=>{
@@ -81,6 +83,7 @@ export function PreviewPanel() {
       <div ref={stageRef} className="preview-stage" style={{width:fit.width,height:fit.height,transform:`translate(${pan.x}px, ${pan.y}px)`}} />
       {!hasAnyClip&&<div className="canvas-empty"><Film size={30} strokeWidth={1}/><strong>开始你的下一段故事</strong><span>导入素材，然后插入时间线</span><button type="button" onClick={()=>void openWorkspaceAssets()}><Upload size={13}/>导入素材</button><small>MP4 / M4A</small></div>}
     </div>
+    {status&&<div className="preview-preparing" role="status">{status}</div>}
     {error&&<div className="preview-error" role="alert">{error}<button type="button" onClick={()=>setError("")}>关闭</button></div>}
     <TransportBar />
   </section>;

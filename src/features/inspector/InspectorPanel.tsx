@@ -28,6 +28,7 @@ export function InspectorPanel() {
   const picked =
     selection.length === 1 ? findSelectedClip(sequence, selection[0]!) : null;
   const asset = picked ? assets.find((a) => a.id === picked.clip.assetId) : undefined;
+  const source=asset?.audioStreams?.find(s=>s.index===picked?.clip.sourceStreamIndex);
   const control = (group:"transform"|"audio", name:string, prop:Animatable<number>, min?:number, max?:number, step=0.01) => prop.kind!=="static"
     ? <span>关键帧（保留，暂不可编辑）</span>
     : <input aria-label={({x:"位置 X",y:"位置 Y",scale:"缩放",rotation:"旋转",opacity:"不透明度",gain:"增益",pan:"声像"} as Record<string,string>)[name] ?? name} type="number" value={prop.value} min={min} max={max} step={step} disabled={picked?.track.locked}
@@ -41,10 +42,11 @@ export function InspectorPanel() {
             <span className="inspector__name" title={asset ? asset.path : picked.clip.assetId}>
               {asset ? basename(asset.path) : "素材已失效"}
             </span>
-            {asset && <span className="inspector__badge">{KIND_LABEL[asset.kind]}</span>}
+            {asset && <span className="inspector__badge">{picked.track.kind === "audio" ? "音频" : KIND_LABEL[asset.kind]}</span>}
           </div>
 
           <dl className="inspector__rows">
+            {source && <><dt>源音轨</dt><dd>{source.name} · {source.channels} 声道</dd></>}
             <dt>轨道</dt>
             <dd>{picked.track.name}</dd>
             <dt>时间线区间</dt>
@@ -63,7 +65,7 @@ export function InspectorPanel() {
             <dd>×{picked.clip.speed.toFixed(2)}</dd>
           </dl>
 
-          <p className="inspector__section">变换</p>
+          {picked.track.kind === "video" && <><p className="inspector__section">变换</p>
           <dl className="inspector__rows">
             <dt>位置 X / Y</dt>
             <dd>
@@ -78,14 +80,15 @@ export function InspectorPanel() {
             <dd>{control("transform","opacity",picked.clip.transform.opacity,0,1)}</dd>
           </dl>
 
-          <p className="inspector__section">音频</p>
+          </>}
+          {(picked.track.kind === "audio" || !picked.clip.audioDetached && asset?.hasAudio) && <><p className="inspector__section">音频</p>
           <dl className="inspector__rows">
             <dt>增益</dt>
             <dd>{control("audio","gain",picked.clip.audio.gain,0,2)}</dd>
             <dt>声像</dt><dd>{control("audio","pan",picked.clip.audio.pan,-1,1)}</dd>
             <dt>效果</dt>
             <dd>{picked.clip.effects.length} 个</dd>
-          </dl>
+          </dl></>}
         </div>
       ) : selection.length > 1 ? (
         <p className="panel-placeholder">已选中 {selection.length} 个块，请单选一个片段以调整属性。</p>
@@ -102,6 +105,7 @@ export function InspectorPanel() {
             </dd>
             <dt>总时长</dt>
             <dd>{formatTimecode(sequenceDurationUs(sequence), sequence.fps)}</dd>
+            {source && <><dt>源音轨</dt><dd>{source.name} · {source.channels} 声道</dd></>}
             <dt>轨道</dt>
             <dd>
               {sequence.tracks.filter((t) => t.kind === "video").length}V /{" "}

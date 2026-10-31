@@ -116,3 +116,5 @@
 
 .ps-workspace { user-select: none; }
 .ps-workspace input, .ps-workspace textarea, .ps-workspace .export-errors pre { user-select: text; }
+
+.preview-preparing {padding:5px 12px;font-size:10px;color:var(--fang-color-text-muted);background:var(--fang-color-bg);}

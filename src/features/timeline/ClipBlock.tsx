@@ -11,6 +11,7 @@ import { clipDurationUs, clipEndUs } from "../../core/project/timelineOps";
 import type { Clip, MediaAsset, Track } from "../../core/project/types";
 import { findSnapOffset, SNAP_THRESHOLD_PX, assetDisplayName } from "./timelineGeometry";
 import { ClipWaveform } from "./ClipWaveform";
+import { ClipFilmstrip } from "./ClipFilmstrip";
 
 /** 位移超过该 px 才算拖动，否则视为点击（点选不触发 moveClip）。 */
 const DRAG_THRESHOLD_PX = 3;
@@ -33,6 +34,7 @@ export interface ClipBlockProps {
   pxPerUs: number;
   asset: MediaAsset | undefined;
   selected: boolean;
+  scrollerEl: HTMLDivElement | null;
   /** 全轨块边缘（含 0），拖动时排除自身两条边。 */
   snapEdges: readonly number[];
   /** 悬停上报：剃刀 S 无选中时分割指针下的块。 */
@@ -45,6 +47,7 @@ export function ClipBlock({
   pxPerUs,
   asset,
   selected,
+  scrollerEl,
   snapEdges,
   onHover,
 }: ClipBlockProps) {
@@ -109,7 +112,8 @@ export function ClipBlock({
     el.style.transform = ""; // React 重渲染接管 left 前先清视觉残影
   };
 
-  const name = assetDisplayName(asset);
+  const stream=asset?.audioStreams?.find(s=>s.index===clip.sourceStreamIndex);
+  const name = assetDisplayName(asset)+(track.kind==="audio"&&stream?` · ${stream.name}`:"");
   const classNames = [
     "timeline-clip",
     track.kind === "audio" ? "timeline-clip--audio" : "timeline-clip--video",
@@ -131,9 +135,11 @@ export function ClipBlock({
       onPointerEnter={() => onHover({ clipId: clip.id, trackId: track.id })}
       onPointerLeave={() => onHover(null)}
     >
+      {asset?.kind === "video" && track.kind === "video" &&
+        <ClipFilmstrip asset={asset} clip={clip} width={widthPx} pxPerUs={pxPerUs} scrollerEl={scrollerEl} />}
       <span className="timeline-clip__bar" aria-hidden="true" />
       <span className="timeline-clip__name">{name}</span>
-      {asset?.hasAudio && <ClipWaveform path={asset.path} clip={clip} width={widthPx} />}
+      {asset?.hasAudio && track.kind === "audio" && <ClipWaveform path={asset.path} clip={clip} width={widthPx} />}
     </div>
   );
 }

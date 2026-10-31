@@ -44,7 +44,19 @@ export type Animatable<T> = StaticValue<T> | KeyframedValue<T>;
 export type AssetKind = "video" | "audio" | "image";
 
 /** 素材池条目：一次导入一条；剪辑块按 assetId 引用。 */
+export interface MediaAudioStream {
+  /** 容器内实际流索引，不是声道序号。立体声仍是一条音轨。 */
+  index: number;
+  name: string;
+  codec: string;
+  sampleRate: number;
+  channels: number;
+  startUs: number;
+  endUs: number;
+}
+
 export interface MediaAsset {
+  audioStreams?: MediaAudioStream[];
   id: string;
   /** 绝对路径（经 Tauri 对话框选择，跨平台由 Rust 侧规整）。 */
   path: string;
@@ -115,6 +127,10 @@ export interface Transition {
 // ===== 剪辑块 =====
 
 export interface Clip {
+  /** 明确选择容器内的源流；旧工程缺省保留单流兼容。 */
+  sourceStreamIndex?: number;
+  /** 视频的声音已成为独立音频片段，不能再隐含出声。 */
+  audioDetached?: boolean;
   id: string;
   assetId: string;
   /** 时间线起点（微秒）。 */

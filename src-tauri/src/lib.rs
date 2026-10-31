@@ -12,6 +12,7 @@
 // probe/waveform/ye_engine/export_ye 四模块 pub 供单元测试与集成测试
 // （tests/parity.rs 对拍、tests/export_ye_e2e.rs 端到端）直调生产路径
 // （duan lib.rs 同款先例）；ffmpeg 模块无直调需求，保持私有。
+pub mod audio_preview;
 pub mod export_ye;
 mod ffmpeg;
 #[cfg(test)]
@@ -30,10 +31,13 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             runtime::media_runtime_info,
+            audio_preview::audio_stream_preview,
+            waveform::waveform_stream,
             probe::probe_media,
             ffmpeg::ffmpeg_info,
             ffmpeg::extract_frame,
             ye_engine::extract_frame_ye,
+            ye_engine::timeline_thumbnail,
             // 波形命令串列于抽帧两命令之后（同段串行注册），导出执行收尾
             waveform::waveform,
             ffmpeg::run_export,
@@ -43,6 +47,11 @@ pub fn run() {
             export_ye::run_timeline_ye,
             export_ye::cancel_export_ye,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running jian");
+        .build(tauri::generate_context!())
+        .expect("error while building jian")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                audio_preview::cleanup();
+            }
+        });
 }

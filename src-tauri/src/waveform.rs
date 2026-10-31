@@ -185,19 +185,33 @@ fn auto_route(
 /// 任何 Err（容器不识/无音频流/多音轨/PNS 等解码能力面外）原样透传给
 /// 调用方——auto 壳据此回退 ffmpeg 轨。
 pub fn waveform_peaks_ye(path: &Path, buckets: usize) -> Result<WaveformPeaks, String> {
-    waveform_ye_impl(path, buckets, false)
+    waveform_ye_impl(path, buckets, false, None)
 }
 pub fn waveform_peaks_aligned(path: &Path, buckets: usize) -> Result<WaveformPeaks, String> {
-    waveform_ye_impl(path, buckets, true)
+    waveform_ye_impl(path, buckets, true, None)
 }
-fn waveform_ye_impl(path: &Path, buckets: usize, aligned: bool) -> Result<WaveformPeaks, String> {
+#[tauri::command(async)]
+pub fn waveform_stream(
+    path: String,
+    buckets: usize,
+    stream_index: u32,
+) -> Result<WaveformPeaks, String> {
+    waveform_ye_impl(Path::new(&path), buckets, true, Some(stream_index))
+}
+fn waveform_ye_impl(
+    path: &Path,
+    buckets: usize,
+    aligned: bool,
+    stream_index: Option<u32>,
+) -> Result<WaveformPeaks, String> {
     validate_buckets(buckets)?;
     let file =
         File::open(path).map_err(|e| format!("ye 打开素材失败（{}）: {e}", path.display()))?;
     let cancel = AtomicBool::new(false);
     let src = if aligned {
-        ye::waveform::audio_peaks_aligned_with_count(
+        ye::waveform::audio_peaks_aligned_stream_with_count(
             Box::new(BufReader::new(file)),
+            stream_index,
             buckets,
             &cancel,
         )

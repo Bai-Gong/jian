@@ -42,3 +42,7 @@ export interface WaveformPeaks {
 export function getWaveformPeaks(path: string, buckets: number): Promise<WaveformPeaks> {
   return invoke<WaveformPeaks>("waveform", { path, buckets });
 }
+
+export function getStreamWaveformPeaks(path:string,buckets:number,streamIndex:number):Promise<WaveformPeaks>{
+ return invoke<WaveformPeaks>("waveform_stream",{path,buckets,streamIndex});
+}

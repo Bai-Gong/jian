@@ -43,6 +43,7 @@ export async function importAssets(): Promise<MediaAsset[]> {
       height: info.height,
       fps: info.fps,
       hasAudio: info.hasAudio,
+      audioStreams: info.audioStreams,
       videoCodec: info.videoCodec ?? "",
       audioCodec: info.audioCodec ?? "",
       sampleRate: info.sampleRate ?? 0,

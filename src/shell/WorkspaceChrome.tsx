@@ -97,11 +97,12 @@ export function LayersPanel() {
         </div>
         {track.clips.length === 0 ? <p className="layer-track__empty">空轨道</p> : [...track.clips].reverse().map((clip) => {
           const asset = assets.find((a) => a.id === clip.assetId);
+          const source=asset?.audioStreams?.find(s=>s.index===clip.sourceStreamIndex);
           return <button type="button" key={clip.id} className={`layer-row ${selection.includes(clip.id) ? "is-selected" : ""}`} aria-pressed={selection.includes(clip.id)}
             onClick={(event) => { const store = useProjectStore.getState(); if (event.ctrlKey) store.toggleClipSelection(clip.id); else store.setSelection([clip.id]); useWorkspace.getState().setPanel("properties"); }}
             onDoubleClick={() => useProjectStore.getState().setPlayhead(clip.timelineStartUs)} title={asset?.path}>
             <span className={`layer-row__thumb ${track.kind}`}>{track.kind === "video" ? <Film size={19} /> : <Music2 size={19} />}</span>
-            <span className="layer-row__label"><strong>{asset ? basename(asset.path) : "素材已失效"}</strong><small>{formatTimecode(clip.timelineStartUs, sequence.fps)} — {formatTimecode(clipEndUs(clip), sequence.fps)}</small></span>
+            <span className="layer-row__label"><strong>{asset ? basename(asset.path) : "素材已失效"}{track.kind==="audio"&&source?` · ${source.name}`:""}</strong><small>{formatTimecode(clip.timelineStartUs, sequence.fps)} — {formatTimecode(clipEndUs(clip), sequence.fps)}</small></span>
           </button>;
         })}
       </div>)}

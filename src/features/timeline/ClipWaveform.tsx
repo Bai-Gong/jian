@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { getWaveformPeaks, type WaveformPeaks } from "../../core/media/waveform";
+import { getWaveformPeaks, getStreamWaveformPeaks, type WaveformPeaks } from "../../core/media/waveform";
 import type { Clip } from "../../core/project/types";
 const pending = new Map<string,Promise<WaveformPeaks>>();
-function waveform(path:string):Promise<WaveformPeaks> {
-  const cached=pending.get(path);if(cached)return cached;
-  const job=getWaveformPeaks(path,1024);pending.set(path,job);job.catch(()=>pending.delete(path));return job;
+function waveform(path:string,streamIndex?:number):Promise<WaveformPeaks> {
+  const key=`${path}:${streamIndex??"single"}`;const cached=pending.get(key);if(cached)return cached;
+  const job=streamIndex===undefined?getWaveformPeaks(path,1024):getStreamWaveformPeaks(path,1024,streamIndex);pending.set(key,job);job.catch(()=>pending.delete(key));return job;
 }
 export function ClipWaveform({path,clip,width}:{path:string;clip:Clip;width:number}) {
   const canvas=useRef<HTMLCanvasElement>(null),[peaks,setPeaks]=useState<WaveformPeaks|null>(null),[error,setError]=useState("");
-  useEffect(()=>{let active=true;setPeaks(null);setError("");void waveform(path).then((p)=>{if(active)setPeaks(p);}).catch((e:unknown)=>{if(active)setError(String(e));});return()=>{active=false;};},[path]);
+  useEffect(()=>{let active=true;setPeaks(null);setError("");void waveform(path,clip.sourceStreamIndex).then((p)=>{if(active)setPeaks(p);}).catch((e:unknown)=>{if(active)setError(String(e));});return()=>{active=false;};},[path,clip.sourceStreamIndex]);
   useEffect(()=>{
     const el=canvas.current;if(!el || !peaks)return;
     el.width=Math.max(2,Math.min(4096,Math.ceil(width)));el.height=24;

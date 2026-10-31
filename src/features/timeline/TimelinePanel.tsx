@@ -222,6 +222,7 @@ export function TimelinePanel() {
                 key={track.id}
                 track={track}
                 pxPerUs={pxPerUs}
+                scrollerEl={scrollerEl}
                 assets={assetById}
                 selectionSet={selectionSet}
                 snapEdges={snapEdges}

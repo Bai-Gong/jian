@@ -78,17 +78,27 @@ function pauseAllElements(): void { videoPool.pauseAll(); }
 
 // ---- 对外 API（模块级函数，引用恒定） ----
 
+let playRequest=0;
 function play(): void {
+  const request=++playRequest;
   videoPool.resumeAudio();
-  const state = useProjectStore.getState();
-  const totalUs = evaluateSequence(selectActiveSequence(state), state.document.assets).durationUs;
-  if (totalUs > 0 && state.playheadUs >= totalUs) {
-    useProjectStore.setState({ playheadUs: 0 }); // 停在末尾再播：从头来（NLE 惯例）
-  }
-  state.setPlaying(true); // 订阅里起摆/重锚
+  const prepare=async()=>{
+    for(;;){
+      if(request!==playRequest)return;
+      const state=useProjectStore.getState(),seq=selectActiveSequence(state);
+      const totalUs=evaluateSequence(seq,state.document.assets).durationUs;
+      if(totalUs>0&&state.playheadUs>=totalUs)useProjectStore.setState({playheadUs:0});
+      const t=useProjectStore.getState().playheadUs;
+      await videoPool.prepare(buildFrameDescription(seq,t,state.document.assets),state.document.assets,seq.width,seq.height);
+      if(state.document===useProjectStore.getState().document)break;
+    }
+    if(request===playRequest)useProjectStore.getState().setPlaying(true);
+  };
+  void prepare().catch(()=>{}); // VideoPool 已展示实际准备错误；不启动无声的播放时钟。
 }
 
 function pause(): void {
+  playRequest++;
   useProjectStore.getState().setPlaying(false); // 订阅里停摆并暂停元素
 }
 
