@@ -29,7 +29,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 # 冶使用已推送提交，Cargo.lock 一起锁定，禁止依赖本机未提交路径。
-ye = { git = "https://github.com/Bai-Gong/ye.git", rev = "0df39fcaf6e5a7c69f47ac57ac2bb4c2e056bfde", default-features = false, features = ["mp4", "h264", "aac", "png"] }
+ye = { git = "https://github.com/Bai-Gong/ye.git", rev = "37c3cd414da69a4c013c5a4730039806db6e2d46", default-features = false, features = ["mp4", "h264", "aac", "png"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -24,6 +24,13 @@ pub mod ye_engine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Release uses panic=abort; preserve the original reason in the application
+    // log before the process exits, including failures inside command workers.
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("{info}\n{}", std::backtrace::Backtrace::force_capture());
+        previous_hook(info);
+    }));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
