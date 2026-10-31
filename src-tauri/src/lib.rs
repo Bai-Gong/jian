@@ -14,7 +14,8 @@
 // （duan lib.rs 同款先例）；ffmpeg 模块无直调需求，保持私有。
 pub mod export_ye;
 mod ffmpeg;
-pub mod frame;
+#[cfg(test)]
+mod frame;
 pub mod probe;
 pub mod waveform;
 pub mod ye_engine;
@@ -29,7 +30,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             probe::probe_media,
             ffmpeg::ffmpeg_info,
-            frame::extract_frame,
+            ffmpeg::extract_frame,
             ye_engine::extract_frame_ye,
             // 波形命令串列于抽帧两命令之后（同段串行注册），导出执行收尾
             waveform::waveform,

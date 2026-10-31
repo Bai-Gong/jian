@@ -246,3 +246,8 @@ mod tests {
         assert_eq!(parse_out_time_us(""), None);
     }
 }
+
+
+/// 开发期兼容入口，严格执行 FFmpeg；冶抽帧只有 ye_engine 门面实现。
+#[tauri::command(async)]
+pub fn extract_frame(path: String,time_us:i64)->Result<String,String> { extract_frame_ffmpeg(&path,time_us) }

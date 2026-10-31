@@ -66,7 +66,6 @@ pub struct FrameImage {
 ///
 /// 双引擎：默认 ye（MP4+H.264），失败回退 ffmpeg（warn 留痕）；
 /// `BJ_FRAME_ENGINE=ffmpeg` 强制 ffmpeg。
-#[tauri::command(async)]
 pub fn extract_frame(path: String, time_us: i64) -> Result<String, String> {
     let engine = frame_engine_from_env(std::env::var("BJ_FRAME_ENGINE").ok().as_deref());
     match engine {

@@ -23,7 +23,7 @@
 //! pub 供集成测试（tests/export_ye_e2e.rs）直调。
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -158,10 +158,7 @@ pub fn export_ye_impl(
     progress: &dyn Fn(i64, i64),
 ) -> Result<ConvertStats, String> {
     let result = run_ye_export(segments, output, spec, cancel, progress);
-    if result.is_err() {
-        // 半成品清理：泵已随错误丢弃输出句柄，这里删残留文件（不存在时忽略）。
-        let _ = std::fs::remove_file(output);
-    }
+
     result
 }
 
@@ -195,7 +192,8 @@ fn run_ye_export(
         .collect();
     let compose_segments = compose_segments?;
 
-    let out_file = File::create(output).map_err(|e| format!("{}: {e}", output.display()))?;
+    let transaction = ye::output::OutputTransaction::new(output).map_err(|e| format!("{}: {e}", output.display()))?;
+    let out_file = transaction.writer().map_err(|e| e.to_string())?;
     let settings = ye::compose::ComposeSettings {
         width: spec.size.0,
         height: spec.size.1,
@@ -212,18 +210,20 @@ fn run_ye_export(
             }
         },
     };
-    ye::compose::compose(
+    let stats = ye::compose::compose(
         &containers,
         &codecs,
         compose_segments,
         "mp4",
-        Box::new(BufWriter::new(out_file)),
+        Box::new(out_file),
         &settings,
         ye::convert::filter_ops(),
         progress,
         cancel,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(stats)
 }
 
 /// 跑导出（ye 引擎）：与 ffmpeg.rs 的 run_export 同一事件契约（复用

@@ -38,6 +38,9 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FILE_ID: AtomicU64 = AtomicU64::new(0);
 
 use jian_lib::probe::probe_media;
 use jian_lib::waveform::{PeakBucket, waveform_peaks_ffmpeg, waveform_peaks_ye};
@@ -255,8 +258,8 @@ fn tmp_path(tag: &str, ext: &str) -> PathBuf {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-        "jian-parity-{tag}-{}-{nanos}.{ext}",
-        std::process::id()
+        "jian-parity-{tag}-{}-{nanos}-{}.{ext}",
+        std::process::id(), FILE_ID.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
@@ -296,8 +299,8 @@ fn ensure_vector(name: &str, recipe_args: &[&str]) -> Option<PathBuf> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let path = dir.join(format!(
-        "jian-parity-{stem}-{}-{nanos}{ext}",
-        std::process::id()
+        "jian-parity-{stem}-{}-{nanos}-{}{ext}",
+        std::process::id(), FILE_ID.fetch_add(1, Ordering::Relaxed)
     ));
     let args: Vec<OsString> = recipe_args.iter().map(OsString::from).collect();
     run_ffmpeg_to(&exe, &args, &path);

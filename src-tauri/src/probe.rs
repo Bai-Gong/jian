@@ -22,7 +22,7 @@ use std::io::BufReader;
 use serde::Serialize;
 use serde_json::Value;
 use ye::codec::MediaType;
-use ye::container::{ContainerRegistry, MediaHeader, Stream};
+use ye::container::{MediaHeader, Stream};
 use ye::time::Timestamp;
 
 use crate::ffmpeg::{ffmpeg_info, stderr_tail};
@@ -141,12 +141,8 @@ fn probe_ye(path: &str) -> Result<ProbeResult, String> {
 /// 只注册 mp4，其余容器在 auto 下自然落入 Err → ffprobe 回退）。
 fn ye_header(path: &str) -> Result<MediaHeader, String> {
     let file = File::open(path).map_err(|e| format!("ye 打开失败（{path}）: {e}"))?;
-    let mut registry = ContainerRegistry::new();
-    ye::container::mp4::register_mp4(&mut registry);
-    registry
-        .probe(Box::new(BufReader::new(file)))
-        .map(|(_, header)| header)
-        .map_err(|e| format!("ye 探测失败（{path}）: {e}"))
+    ye::media::inspect(Box::new(BufReader::new(file)))
+        .map_err(|e|format!("ye 探测失败（{path}）: {e}"))
 }
 
 /// 媒体种类判定（纯函数，供单测）。次序写死：
@@ -1010,6 +1006,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 fn head_is_mp4_family(head: &[u8]) -> bool {
     if head.len() < 8 {
         return false;
@@ -1020,6 +1017,7 @@ fn head_is_mp4_family(head: &[u8]) -> bool {
 
 /// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
 /// 与 waveform.rs（波形引擎路由）共用本判定。
+#[cfg(test)]
 pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
