@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/fang
-          ref: main
+          ref: 21c522dba3c1444060c5cd6ebd4e6760d21f9b38
           path: fang
       # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
       - name: fang 挪到兄弟目录
@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/ye
-          ref: ba712826be9e489d439dd6c2276055d94d67c66c
+          ref: e30724896b8bc8e645b86d1585bb51acdcfef6c1
           path: ye
       - name: ye 挪到兄弟目录
         run: mv ye ../ye
@@ -60,15 +60,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-            libxdo-dev libayatana-appindicator3-dev libssl-dev pkg-config
+            libxdo-dev libayatana-appindicator3-dev libssl-dev pkg-config ffmpeg
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - name: cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
-      # 对拍/回归测试进 CI（2026-10-24 评审补）：ubuntu-latest 自带 ffmpeg，
-      # 对拍测试会真跑而不是 skip——「Ok 但数据错」类回归在 CI 里有防线。
+      # FFmpeg 仅用于开发/CI 参考比对，默认产品运行期不调用外部工具。
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
@@ -83,7 +82,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/fang
-          ref: main
+          ref: 21c522dba3c1444060c5cd6ebd4e6760d21f9b38
           path: fang
       # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
       - name: fang 挪到兄弟目录
@@ -93,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Bai-Gong/ye
-          ref: ba712826be9e489d439dd6c2276055d94d67c66c
+          ref: e30724896b8bc8e645b86d1585bb51acdcfef6c1
           path: ye
       - name: ye 挪到兄弟目录
         run: mv ye ../ye
@@ -111,7 +110,7 @@ jobs:
         run: npm ci
       # 只产 NSIS 安装包：WiX(MSI) 的 codepage 1252 无法编码中文产品名（zhi 仓库实测 LGHT0311）
       - name: 构建 Tauri 安装包
-        run: npm run tauri build -- --bundles nsis
+        run: npm run package:windows
       - name: 上传试用安装包
         uses: actions/upload-artifact@v4
         with:

@@ -1,87 +1,127 @@
-/**
- * 媒体元素池（开发方案 §3.5 M1 阶段）：每素材一个 DOM 元素，预览舞台的显示主体。
- * 池只管元素生命周期与主静音；「这一帧显示谁、谁出声、走带到哪」由 usePlayback
- * 按 FrameDescription 驱动——求值永远只有一个出处（core/composite）。
- *
- * M1 已知局限：video 元素池单层取景——非顶层视频块画面不可见；
- * 同一素材多个块同播时共用一个元素，只出一份声（导出走 amix 是多路）。均 M2 canvas 合成修。
- */
+/** WebView decodes each clip occurrence; Canvas and WebAudio consume the evaluator. */
 import { assetUrl } from "../media/assetUrl";
 import type { MediaAsset } from "../project/types";
+import type { FrameDescription } from "../composite/composite";
 
-/** 舞台内媒体元素的统一形态：铺满容器、保持比例、初始隐藏（显隐由播放循环逐帧切）。 */
-function applyStageStyle(el: HTMLElement): void {
-  el.style.position = "absolute";
-  el.style.inset = "0";
-  el.style.width = "100%";
-  el.style.height = "100%";
-  el.style.objectFit = "contain";
-  el.style.display = "none";
-}
-
+interface AudioRoute { source: MediaElementAudioSourceNode; input: GainNode; splitter: ChannelSplitterNode; left: GainNode; right: GainNode; merger: ChannelMergerNode }
 export class VideoPool {
   private container: HTMLElement | null = null;
-  /** assetId → 媒体元素。视频/音频建 video（纯音频只出声），图片建 img（定格帧）。 */
-  private readonly elements = new Map<string, HTMLElement>();
+  private canvas: HTMLCanvasElement | null = null;
+  private readonly elements = new Map<string, HTMLVideoElement | HTMLImageElement>();
+  private readonly routes = new Map<string, AudioRoute>();
+  private context: AudioContext | null = null;
+  private master: GainNode | null = null;
   private masterMuted = false;
+  private selected = new Set<string>();
+  private last: { desc: FrameDescription; width: number; height: number } | null = null;
 
-  /** 舞台容器就位（PreviewPanel 的 useEffect 调一次）；已 acquire 的元素随后挂进去。 */
   mount(container: HTMLElement): void {
-    if (this.container === container) return;
-    this.unmount();
-    this.container = container;
-    for (const el of this.elements.values()) container.appendChild(el);
+    this.unmount(); this.container = container;
+    this.canvas = document.createElement("canvas");
+    this.canvas.style.cssText = "width:100%;height:100%;display:block;position:absolute;inset:0";
+    this.canvas.setAttribute("aria-label", "多轨画面预览");
+    container.appendChild(this.canvas);
+    for (const element of this.elements.values()) container.appendChild(element);
+    this.draw();
   }
-
-  /** 舞台拆除：元素摘下留用（不销毁），下次 mount 再挂回。 */
   unmount(): void {
-    if (this.container === null) return;
-    for (const el of this.elements.values()) el.remove();
+    this.pauseAll(); this.canvas?.remove(); this.canvas = null;
+    for (const element of this.elements.values()) element.remove();
     this.container = null;
   }
-
-  /** 取素材对应的媒体元素（无则建）。同一素材恒同一个元素——这就是 M1 的单元素局限所在。 */
-  acquire(asset: MediaAsset): HTMLElement {
-    const existing = this.elements.get(asset.id);
-    if (existing) return existing;
+  private report(message: string): void {
+    this.container?.dispatchEvent(new CustomEvent("preview-error", { detail: message }));
+  }
+  acquire(asset: MediaAsset, key = asset.id): HTMLVideoElement | HTMLImageElement {
+    const existing = this.elements.get(key); if (existing) return existing;
     const el = asset.kind === "image" ? document.createElement("img") : document.createElement("video");
+    el.crossOrigin = "anonymous";
     el.src = assetUrl(asset.path);
-    if (el instanceof HTMLVideoElement) {
-      el.preload = "auto";
-      el.playsInline = true; // 桌面 WebView 无碍，防移动端全屏劫持
-      el.muted = this.masterMuted;
-    } else {
-      el.alt = "";
+    el.style.cssText = "position:absolute;width:1px;height:1px;opacity:0;pointer-events:none";
+    if (el instanceof HTMLVideoElement) { el.preload = "auto"; el.playsInline = true; el.muted = true; }
+    else el.alt = "";
+    for (const event of ["loadeddata", "seeked", "load"]) el.addEventListener(event, () => this.draw());
+    el.addEventListener("error", () => this.report(`预览无法解码：${asset.path}`));
+    this.elements.set(key, el); this.container?.appendChild(el); return el;
+  }
+  release(key: string): void {
+    const el = this.elements.get(key);
+    if (el instanceof HTMLVideoElement) { el.pause(); el.removeAttribute("src"); el.load(); }
+    el?.remove(); this.elements.delete(key);
+    const route = this.routes.get(key);
+    if (route) { for (const node of Object.values(route)) node.disconnect(); this.routes.delete(key); }
+  }
+  get(key: string): HTMLElement | undefined { return this.elements.get(key); }
+  entries(): IterableIterator<[string, HTMLVideoElement | HTMLImageElement]> { return this.elements.entries(); }
+  setMasterMuted(muted: boolean): void { this.masterMuted = muted; if (this.master) this.master.gain.value = muted ? 0 : 1; }
+  setSelection(ids:readonly string[]):void {this.selected=new Set(ids);this.draw();}
+  pauseAll(): void {
+    for (const el of this.elements.values()) if (el instanceof HTMLVideoElement) el.pause();
+    for (const route of this.routes.values()) { route.left.gain.value = 0; route.right.gain.value = 0; }
+  }
+  resumeAudio(): void {
+    this.context ??= new AudioContext({ sampleRate: 48000 });
+    if (!this.master) { this.master = this.context.createGain(); this.master.gain.value = this.masterMuted ? 0 : 1; this.master.connect(this.context.destination); }
+    void this.context.resume().catch((error) => this.report(`音频预览启动失败：${String(error)}`));
+  }
+  private audioRoute(key: string, el: HTMLVideoElement): AudioRoute | undefined {
+    if (!this.context || !this.master) return undefined;
+    const hit = this.routes.get(key); if (hit) return hit;
+    const context = this.context;
+    const source = context.createMediaElementSource(el), input = context.createGain();
+    input.channelCount = 2; input.channelCountMode = "explicit"; input.channelInterpretation = "speakers";
+    const splitter = context.createChannelSplitter(2), left = context.createGain(), right = context.createGain(), merger = context.createChannelMerger(2);
+    left.gain.value = 0; right.gain.value = 0;
+    source.connect(input); input.connect(splitter); splitter.connect(left, 0); splitter.connect(right, 1);
+    left.connect(merger, 0, 0); right.connect(merger, 0, 1); merger.connect(this.master);
+    el.muted = false; el.volume = 1;
+    const route = { source, input, splitter, left, right, merger }; this.routes.set(key, route); return route;
+  }
+  sync(desc: FrameDescription, assets: readonly MediaAsset[], width: number, height: number, playing: boolean): void {
+    this.last = { desc, width, height };
+    const byId = new Map(assets.map((a) => [a.id, a]));
+    const drivers = new Map([...desc.audioLayers, ...desc.videoLayers].map((layer) => [layer.clipId, layer]));
+    const audio = new Map(desc.audioLayers.map((layer) => [layer.clipId, layer]));
+    for (const key of this.elements.keys()) if (!drivers.has(key)) this.release(key);
+    for (const [key, layer] of drivers) {
+      const asset = byId.get(layer.assetId); if (!asset) continue;
+      const el = this.acquire(asset, key); if (!(el instanceof HTMLVideoElement)) continue;
+      const target = Math.max(0, (layer.sourceInUs + (desc.tUs - layer.timelineStartUs) * layer.speed) / 1e6);
+      el.playbackRate = Math.min(16, Math.max(0.0625, layer.speed));
+      if (Math.abs(el.currentTime - target) > (playing ? 0.08 : 0.0005)) el.currentTime = target;
+      const route = this.audioRoute(key, el), mix = audio.get(key);
+      if (route) {
+        route.left.gain.value = playing && mix ? mix.gain * (1 - Math.max(0, mix.pan)) : 0;
+        route.right.gain.value = playing && mix ? mix.gain * (1 + Math.min(0, mix.pan)) : 0;
+      }
+      if (playing) void el.play().catch((error: unknown) => {
+        if (!(error instanceof DOMException) || error.name !== "AbortError") this.report(`播放失败：${String(error)}`);
+      });
+      else el.pause();
     }
-    applyStageStyle(el);
-    this.elements.set(asset.id, el);
-    this.container?.appendChild(el);
-    return el;
+    this.draw();
   }
-
-  /** 素材不再被任何层引用时归还（元素销毁）。 */
-  release(assetId: string): void {
-    this.elements.get(assetId)?.remove();
-    this.elements.delete(assetId);
-  }
-
-  get(assetId: string): HTMLElement | undefined {
-    return this.elements.get(assetId);
-  }
-
-  /** 池内全部元素（usePlayback 逐帧切显隐/音量/走带用）。 */
-  entries(): IterableIterator<[string, HTMLElement]> {
-    return this.elements.entries();
-  }
-
-  /** 全局（主）静音：独立于各层增益，直接压 element.muted。 */
-  setMasterMuted(muted: boolean): void {
-    this.masterMuted = muted;
-    for (const el of this.elements.values()) {
-      if (el instanceof HTMLVideoElement) el.muted = muted;
+  private draw(): void {
+    if (!this.canvas || !this.last) return;
+    const { desc, width, height } = this.last;
+    if (this.canvas.width !== width) this.canvas.width = width;
+    if (this.canvas.height !== height) this.canvas.height = height;
+    const context = this.canvas.getContext("2d"); if (!context) return;
+    context.globalAlpha = 1; context.fillStyle = "black"; context.fillRect(0, 0, width, height);
+    for (const layer of desc.videoLayers) {
+      const el = this.elements.get(layer.clipId); if (!el) continue;
+      const [w, h] = el instanceof HTMLVideoElement ? [el.videoWidth, el.videoHeight] : [el.naturalWidth, el.naturalHeight];
+      if (!w || !h || (el instanceof HTMLVideoElement && el.readyState < 2)) continue;
+      context.save(); context.translate(width / 2 + layer.x, height / 2 + layer.y);
+      context.rotate(layer.rotation * Math.PI / 180); context.scale(layer.scale, layer.scale); context.globalAlpha = layer.opacity;
+      context.drawImage(el, -w / 2, -h / 2, w, h); context.restore();
+    }
+    for(const layer of desc.videoLayers.filter((l)=>this.selected.has(l.clipId))) {
+      const el=this.elements.get(layer.clipId);if(!el)continue;
+      const [w,h]=el instanceof HTMLVideoElement?[el.videoWidth,el.videoHeight]:[el.naturalWidth,el.naturalHeight];if(!w || !h || layer.scale<=0)continue;
+      context.save();context.translate(width/2+layer.x,height/2+layer.y);context.rotate(layer.rotation*Math.PI/180);context.scale(layer.scale,layer.scale);
+      context.strokeStyle="#67c5ff";context.lineWidth=1.5*width/Math.max(1,this.canvas.clientWidth)/layer.scale;context.strokeRect(-w/2,-h/2,w,h);context.restore();
     }
   }
 }
-
-/** 模块级单例：舞台与素材元素跨组件共享（预览器 mount、TransportBar 控静音、播放引擎走带）。 */
-export const videoPool: VideoPool = new VideoPool();
+export const videoPool = new VideoPool();

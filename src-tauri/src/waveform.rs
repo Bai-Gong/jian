@@ -185,13 +185,26 @@ fn auto_route(
 /// 任何 Err（容器不识/无音频流/多音轨/PNS 等解码能力面外）原样透传给
 /// 调用方——auto 壳据此回退 ffmpeg 轨。
 pub fn waveform_peaks_ye(path: &Path, buckets: usize) -> Result<WaveformPeaks, String> {
+    waveform_ye_impl(path, buckets, false)
+}
+pub fn waveform_peaks_aligned(path: &Path, buckets: usize) -> Result<WaveformPeaks, String> {
+    waveform_ye_impl(path, buckets, true)
+}
+fn waveform_ye_impl(path: &Path, buckets: usize, aligned: bool) -> Result<WaveformPeaks, String> {
     validate_buckets(buckets)?;
     let file =
         File::open(path).map_err(|e| format!("ye 打开素材失败（{}）: {e}", path.display()))?;
     let cancel = AtomicBool::new(false);
-    let src =
+    let src = if aligned {
+        ye::waveform::audio_peaks_aligned_with_count(
+            Box::new(BufReader::new(file)),
+            buckets,
+            &cancel,
+        )
+    } else {
         ye::waveform::audio_peaks_with_count(Box::new(BufReader::new(file)), buckets, &cancel)
-            .map_err(|e| format!("ye 波形失败（{}）: {e}", path.display()))?;
+    }
+    .map_err(|e| format!("ye 波形失败（{}）: {e}", path.display()))?;
     let result = WaveformPeaks {
         used_engine: ENGINE_YE.to_string(),
         sample_rate: src.sample_rate,
@@ -403,6 +416,9 @@ pub fn waveform_peaks_ffmpeg(path: &Path, buckets: usize) -> Result<WaveformPeak
 #[tauri::command(async)]
 pub fn waveform(path: String, buckets: usize) -> Result<WaveformPeaks, String> {
     validate_buckets(buckets)?;
+    if !cfg!(any(feature = "compat-ffmpeg", test)) {
+        return waveform_peaks_aligned(Path::new(&path), buckets);
+    }
     auto_route(waveform_peaks_ye(Path::new(&path), buckets), || {
         waveform_peaks_ffmpeg(Path::new(&path), buckets)
     })

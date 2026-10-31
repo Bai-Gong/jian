@@ -17,7 +17,7 @@ import { evaluateSequence } from "../composite/composite";
 import { useProjectStore, type ExportEngine } from "../project/store";
 import type { MediaAsset, Sequence } from "../project/types";
 import { buildExportArgs } from "./buildExportArgs";
-import { buildYeExportParams } from "./buildYeExportParams";
+import { buildYeTimelineParams } from "./buildYeTimelineParams";
 
 /** Rust 侧 ExportProgress 事件负载（src-tauri/src/ffmpeg.rs，serde camelCase；
  * ye 轨同一形态复用，见 export_ye.rs）。 */
@@ -30,6 +30,18 @@ interface ExportProgressEvent {
 export interface ExportOptions {
   /** 当前引擎选择（接线层注入，避免编排层反向依赖 store）；缺省读 store。 */
   getEngine?(): ExportEngine;
+}
+
+export class ExportCancelled extends Error { constructor(){super("已取消导出");this.name="ExportCancelled";} }
+let activeExport:{engine:ExportEngine;canceled:boolean;started:boolean;cancelPending:boolean}|null=null;
+async function signalCancel():Promise<void> {
+  const active=activeExport;
+  if(!active || !active.started || active.engine!=="ye" || active.cancelPending)return;
+  active.cancelPending=true;
+  try {await invoke<boolean>("cancel_export_ye");} finally {active.cancelPending=false;}
+}
+export async function cancelExport():Promise<void> {
+  if(!activeExport)return;activeExport.canceled=true;await signalCancel();
 }
 
 /**
@@ -45,6 +57,7 @@ export async function exportProject(
   onProgress?: (p: { timeUs: number; totalUs: number }) => void,
   options?: ExportOptions,
 ): Promise<void> {
+  if(useProjectStore.getState().exportState.running)throw new Error("已有导出任务正在执行");
   const totalUs = Math.round(evaluateSequence(sequence, assets).durationUs);
   if (totalUs <= 0) {
     // 空序列只会导出 0 秒黑场（ffmpeg 会报错或空转），门口拦下
@@ -54,31 +67,22 @@ export async function exportProject(
   }
   const engine: ExportEngine = options?.getEngine?.() ?? useProjectStore.getState().exportEngine;
   useProjectStore.getState().setExportState({ running: true, timeUs: 0, totalUs, error: null });
-
-  const unlisten = await listen<ExportProgressEvent>("export-progress", (event) => {
+  const active={engine,canceled:false,started:false,cancelPending:false};activeExport=active;
+  let unlisten:()=>void=()=>{};
+  try {
+    unlisten = await listen<ExportProgressEvent>("export-progress", (event) => {
     const p = event.payload;
     onProgress?.(p);
     useProjectStore.getState().setExportState({ timeUs: Math.max(0, p.timeUs) });
+    if(active.canceled)void signalCancel().catch(()=>{});
   });
-  try {
     if (engine === "ye") {
-      const built = buildYeExportParams(sequence, assets);
-      if (!built.ok) {
-        // 能力面外：明确拒绝（文案自带「切回 ffmpeg 引擎」指路），不静默降级
-        throw new Error(built.error);
-      }
-      await invoke<null>("run_export_ye", {
-        segments: built.segments,
-        outPath,
-        width: built.width,
-        height: built.height,
-        fpsNum: built.fpsNum,
-        fpsDen: built.fpsDen,
-        crf: built.crf,
-        audioBitrateKbps: built.audioBitrateKbps,
-        stripAudio: built.stripAudio,
-        totalUs,
-      });
+      const request = buildYeTimelineParams(sequence, assets);
+      const issues = await invoke<string[]>("check_timeline_ye", { request });
+      if (issues.length) throw new Error(`导出受阻：\n${issues.join("\n")}`);
+      if(active.canceled)throw new ExportCancelled();
+      active.started=true;
+      await invoke<null>("run_timeline_ye", { request, outPath });
     } else {
       await invoke<null>("run_export", {
         args: buildExportArgs(sequence, assets, outPath),
@@ -88,10 +92,15 @@ export async function exportProject(
     }
     useProjectStore.getState().setExportState({ running: false, error: null });
   } catch (err) {
+    if(active.canceled) {
+      useProjectStore.getState().setExportState({running:false,error:null});
+      throw new ExportCancelled();
+    }
     const message = err instanceof Error ? err.message : String(err);
     useProjectStore.getState().setExportState({ running: false, error: message });
     throw err;
   } finally {
     unlisten();
+    if(activeExport===active)activeExport=null;
   }
 }

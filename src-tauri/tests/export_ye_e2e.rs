@@ -176,9 +176,19 @@ fn stream_layout(ffprobe: &Path, file: &Path) -> String {
     );
     assert!(ok, "ffprobe 失败: {}", String::from_utf8_lossy(&err));
     let json: serde_json::Value = serde_json::from_slice(&out).expect("ffprobe JSON");
-    json["streams"].as_array().expect("stream list").iter().map(|stream| {
-        format!("{},{}", stream["codec_name"].as_str().expect("codec name"), stream["codec_type"].as_str().expect("codec type"))
-    }).collect::<Vec<_>>().join("\n")
+    json["streams"]
+        .as_array()
+        .expect("stream list")
+        .iter()
+        .map(|stream| {
+            format!(
+                "{},{}",
+                stream["codec_name"].as_str().expect("codec name"),
+                stream["codec_type"].as_str().expect("codec type")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 抽取指定时间点的灰度帧（rawvideo 单帧），供画面一致性比较。

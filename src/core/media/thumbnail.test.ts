@@ -55,45 +55,17 @@ describe("getThumbnail（ye 优先双引擎）", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("ye 失败（能力面外等）回退 ffmpeg 轨：同参重发、warn 留现场、取回退轨结果", async () => {
-    vi.mocked(invoke)
-      .mockRejectedValueOnce(
-        "ye 抽帧失败（C:/media/high.mp4）: codec error: profile not supported",
-      )
-      .mockResolvedValueOnce("C:/Temp/jian-frame-222-1.png");
-
-    const url = await getThumbnail("a-fallback");
-
-    expect(url).toBe("asset-url://C:/Temp/jian-frame-222-1.png");
-    expect(invoke).toHaveBeenCalledTimes(2);
-    expect(invoke).toHaveBeenNthCalledWith(1, "extract_frame_ye", {
-      path: "C:/media/high.mp4",
-      timeUs: 0,
-    });
-    expect(invoke).toHaveBeenNthCalledWith(2, "extract_frame", {
-      path: "C:/media/high.mp4",
-      timeUs: 0,
-    });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "ye 抽帧失败，回退 ffmpeg 轨:",
-      "ye 抽帧失败（C:/media/high.mp4）: codec error: profile not supported",
-    );
+  it("ye failure is surfaced without invoking a fallback", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("unsupported profile");
+    await expect(getThumbnail("a-fallback")).rejects.toBe("unsupported profile");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("extract_frame_ye", {path:"C:/media/high.mp4",timeUs:0});
+    expect(warnSpy).not.toHaveBeenCalled();
   });
-
-  it("两轨均失败：整体抛 ffmpeg 轨错误（不吞错），失败不占缓存位", async () => {
-    vi.mocked(invoke)
-      .mockRejectedValueOnce("ye 抽帧失败（C:/media/broken.mp4）: container error: bad box")
-      .mockRejectedValueOnce("抽帧失败（C:/media/broken.mp4）: Invalid data");
-
-    await expect(getThumbnail("a-both-fail")).rejects.toBe(
-      "抽帧失败（C:/media/broken.mp4）: Invalid data",
-    );
-
-    // 失败不占缓存位：重试再次从 ye 轨发起（而非缓存旧失败）
-    vi.mocked(invoke).mockRejectedValueOnce("ye 抽帧失败（C:/media/broken.mp4）: container error: bad box");
-    vi.mocked(invoke).mockResolvedValueOnce("C:/Temp/jian-frame-333-0.png");
-    await expect(getThumbnail("a-both-fail")).resolves.toBe(
-      "asset-url://C:/Temp/jian-frame-333-0.png",
-    );
+  it("failed requests can be retried without caching the error", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("bad box");
+    await expect(getThumbnail("a-both-fail")).rejects.toBe("bad box");
+    vi.mocked(invoke).mockResolvedValueOnce("C:/Temp/retried.png");
+    await expect(getThumbnail("a-both-fail")).resolves.toBe("asset-url://C:/Temp/retried.png");
   });
 });

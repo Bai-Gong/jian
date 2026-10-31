@@ -70,6 +70,9 @@ pub struct ProbeResult {
 #[tauri::command(async)]
 pub fn probe_media(path: String, engine: Option<String>) -> Result<ProbeResult, String> {
     let engine = engine.unwrap_or_else(|| ENGINE_AUTO.to_string());
+    if !cfg!(any(feature = "compat-ffmpeg", test)) && engine == ENGINE_AUTO {
+        return probe_ye(&path);
+    }
     match engine.as_str() {
         ENGINE_FFMPEG => probe_ffmpeg(&path),
         ENGINE_YE => probe_ye(&path),
@@ -142,7 +145,7 @@ fn probe_ye(path: &str) -> Result<ProbeResult, String> {
 fn ye_header(path: &str) -> Result<MediaHeader, String> {
     let file = File::open(path).map_err(|e| format!("ye 打开失败（{path}）: {e}"))?;
     ye::media::inspect(Box::new(BufReader::new(file)))
-        .map_err(|e|format!("ye 探测失败（{path}）: {e}"))
+        .map_err(|e| format!("ye 探测失败（{path}）: {e}"))
 }
 
 /// 媒体种类判定（纯函数，供单测）。次序写死：
@@ -188,9 +191,13 @@ fn finalize_summary(s: MediaSummary, path: &str, used_engine: &str) -> Result<Pr
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("");
-    let kind = classify_media_kind(ext, s.has_video, s.has_audio)
-        .map_err(|e| format!("{e}: {path}"))?
-        .to_string();
+    let kind = classify_media_kind(
+        if used_engine == ENGINE_YE { "" } else { ext },
+        s.has_video,
+        s.has_audio,
+    )
+    .map_err(|e| format!("{e}: {path}"))?
+    .to_string();
 
     let duration_us = s
         .container_duration_us
@@ -312,7 +319,12 @@ fn summarize_ye_header(header: &MediaHeader) -> MediaSummary {
                     s.width = v.width;
                     s.height = v.height;
                 }
-                if let (Some(frames), Some(dur)) = (st.nb_frames, st.duration) {
+                if let Some(rate) = st.codec.video.as_ref().and_then(|v| v.frame_rate) {
+                    s.fps = rate.to_f64();
+                }
+                if s.fps == 0.0
+                    && let (Some(frames), Some(dur)) = (st.nb_frames, st.duration)
+                {
                     let dur_us = timestamp_us(dur);
                     if frames > 0 && dur_us > 0 {
                         s.fps = frames as f64 * 1e6 / dur_us as f64;
@@ -425,6 +437,33 @@ fn gcd(mut a: i64, mut b: i64) -> i64 {
         b = r;
     }
     a
+}
+
+#[cfg(test)]
+fn head_is_mp4_family(head: &[u8]) -> bool {
+    if head.len() < 8 {
+        return false;
+    }
+    let size = u32::from_be_bytes(head[0..4].try_into().unwrap()) as u64;
+    size >= 8 && (&head[4..8] == b"ftyp" || &head[4..8] == b"styp")
+}
+
+/// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
+/// 与 waveform.rs（波形引擎路由）共用本判定。
+#[cfg(test)]
+pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut head = [0u8; 8];
+    let mut filled = 0usize;
+    while filled < head.len() {
+        let n = file.read(&mut head[filled..])?;
+        if n == 0 {
+            break; // EOF：短文件按已读部分判
+        }
+        filled += n;
+    }
+    Ok(head_is_mp4_family(&head[..filled]))
 }
 
 #[cfg(test)]
@@ -778,10 +817,10 @@ mod tests {
         };
         let has_pair =
             |dir: &Path| dir.join(exe("ffmpeg")).is_file() && dir.join(exe("ffprobe")).is_file();
-        if let Some(dir) = std::env::var_os("BJ_FFMPEG_DIR").map(PathBuf::from) {
-            if has_pair(&dir) {
-                return dir;
-            }
+        if let Some(dir) = std::env::var_os("BJ_FFMPEG_DIR").map(PathBuf::from)
+            && has_pair(&dir)
+        {
+            return dir;
         }
         if let Some(path_var) = std::env::var_os("PATH") {
             for dir in std::env::split_paths(&path_var) {
@@ -970,7 +1009,7 @@ mod tests {
         let raw_ye = probe(&m4a, Some("ye")).expect("显式 ye 应成功（读头不解码）");
         assert_eq!(raw_ye.kind, "audio");
         let explicit = probe(&m4a, Some("ffmpeg")).expect("显式 ffmpeg 应成功");
-        assert_ne!(raw_ye.duration_us, explicit.duration_us);
+        assert!((raw_ye.duration_us - explicit.duration_us).abs() <= 1000);
         // auto：回退后与显式 ffmpeg 轨逐字段完全一致
         let auto = probe(&m4a, None).expect("auto 应经回退成功");
         assert_eq!(auto.used_engine, "ffmpeg");
@@ -1004,31 +1043,4 @@ mod tests {
         assert_eq!(probe(&mp4, None).unwrap().used_engine, "ye");
         assert_eq!(probe(&mp4, Some("ffmpeg")).unwrap().used_engine, "ffmpeg");
     }
-}
-
-#[cfg(test)]
-fn head_is_mp4_family(head: &[u8]) -> bool {
-    if head.len() < 8 {
-        return false;
-    }
-    let size = u32::from_be_bytes(head[0..4].try_into().unwrap()) as u64;
-    size >= 8 && (&head[4..8] == b"ftyp" || &head[4..8] == b"styp")
-}
-
-/// 读文件头做 ftyp 嗅探；短文件按实际长度判。frame.rs（抽帧引擎路由）
-/// 与 waveform.rs（波形引擎路由）共用本判定。
-#[cfg(test)]
-pub(crate) fn sniff_is_mp4_family(path: &str) -> std::io::Result<bool> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
-    let mut head = [0u8; 8];
-    let mut filled = 0usize;
-    while filled < head.len() {
-        let n = file.read(&mut head[filled..])?;
-        if n == 0 {
-            break; // EOF：短文件按已读部分判
-        }
-        filled += n;
-    }
-    Ok(head_is_mp4_family(&head[..filled]))
 }

@@ -50,7 +50,17 @@ pub fn extract_frame_ye_impl(path: &Path, time_us: i64) -> Result<String, String
     let png = ye::frame_grab::grab_frame_png(Box::new(BufReader::new(file)), time_us)
         .map_err(|e| ye_grab_error(&path.display().to_string(), &e))?;
     let out = std::env::temp_dir().join(format!("jian-frame-{}.png", unique_token()));
-    std::fs::write(&out, png).map_err(|e| format!("ye 写临时 PNG 失败（{}）: {e}", out.display()))?;
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&out)
+        .map_err(|e| format!("ye 写临时 PNG 失败（{}）: {e}", out.display()))?;
+    if let Err(e) = file.write_all(&png) {
+        drop(file);
+        let _ = std::fs::remove_file(&out);
+        return Err(e.to_string());
+    }
     Ok(out.to_string_lossy().into_owned())
 }
 

@@ -71,7 +71,7 @@ export interface MediaAsset {
 // ===== 剪辑块属性组 =====
 
 /**
- * 画布变换。坐标：画布左上原点、px、素材中心锚定。
+ * 画布变换。x/y为相对画布中心的像素偏移，素材中心锚定。
  * 缩放先为统一系数（PR 的分离宽/高缩放在推迟池，需要时拆 scale 为 scaleX/scaleY）。
  */
 export interface ClipTransform {

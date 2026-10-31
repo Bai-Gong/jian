@@ -259,7 +259,8 @@ fn tmp_path(tag: &str, ext: &str) -> PathBuf {
         .unwrap_or(0);
     PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "jian-parity-{tag}-{}-{nanos}-{}.{ext}",
-        std::process::id(), FILE_ID.fetch_add(1, Ordering::Relaxed)
+        std::process::id(),
+        FILE_ID.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
@@ -300,7 +301,8 @@ fn ensure_vector(name: &str, recipe_args: &[&str]) -> Option<PathBuf> {
         .unwrap_or(0);
     let path = dir.join(format!(
         "jian-parity-{stem}-{}-{nanos}-{}{ext}",
-        std::process::id(), FILE_ID.fetch_add(1, Ordering::Relaxed)
+        std::process::id(),
+        FILE_ID.fetch_add(1, Ordering::Relaxed)
     ));
     let args: Vec<OsString> = recipe_args.iter().map(OsString::from).collect();
     run_ffmpeg_to(&exe, &args, &path);
@@ -576,28 +578,19 @@ fn ye引擎抽帧png出口魔数非空() {
     assert_eq!(&png[0..8], &ye::png::SIGNATURE, "合法 PNG 签名开头");
 }
 
-/// vec-video-multi.mp4（视频可解 + 6 声道不可解音轨）：ye 侧**整体 Err**
-/// （泵给每条流建解码器，AAC 多声道解码 Err 打回整个抽帧——§2.2 行为
-/// 锁定，差异即「该类素材走 ffmpeg 回退」的依据）；ffmpeg 参考侧同点位
-/// 可正常出帧——不做像素对拍。
+/// 无关的六声道音轨不阻塞视频抽帧，保持原有像素门限。
 #[test]
-fn 不可解音轨向量ye轨整体打回() {
+fn 不可解音轨不阻塞视频抽帧() {
     let Some(path) = ensure_vector("vec-video-multi.mp4", VEC_MULTI_ARGS) else {
-        return; // 定位器落空：合法 skip。
+        return;
     };
-    let exe = ffmpeg_exe().expect("定位器已命中（向量已生成）");
+    let exe = ffmpeg_exe().unwrap();
     let t = point_us(45);
-    let err = decode_frame_rgba(open_vector(&path), t)
-        .expect_err("含不可解音轨的素材，ye 侧应整体 Err（不静默丢帧）");
-    assert!(
-        err.to_string().contains("channelConfiguration=6"),
-        "打回原因应述多声道能力面外：{err}"
-    );
-    eprintln!("parity[不可解音轨]：ye 侧整体 Err（{err}）");
-    // 参考侧对照：ffmpeg 同点位可正常出帧（行为差异即回退依据）。
+    let got = decode_frame_rgba(open_vector(&path), t).unwrap();
     let reference = reference_frame(&exe, &path, t, "multi-f45");
-    assert_eq!(reference.len(), (W * H * 4) as usize, "参考侧可正常出帧");
-    let _ = std::fs::remove_file(&path); // 用后即删。
+    assert_eq!((got.width, got.height), (W, H));
+    assert_pixels_close(&got.rgba, &reference, "multi-f45");
+    let _ = std::fs::remove_file(path);
 }
 
 // ---- 第二组：波形（§3.2） ----

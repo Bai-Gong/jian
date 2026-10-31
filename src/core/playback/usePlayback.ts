@@ -8,20 +8,13 @@
  * - 「当前时刻显示哪个块/哪些出声」一律复用 buildFrameDescription，本文件不自算窗口。
  * - 轨道静音/独奏不在播放侧处理：evaluateSequence 的 audioLayers 已经算完（导出同一份）。
  *
- * M1 已知局限：非顶层视频块不显示；同一素材多块同播只出一份声。M2 canvas 合成修。
+ * 每个片段实例由 WebView 解码，Canvas 叠加视频，WebAudio 混合全部有效音轨。
  */
 import { useEffect } from "react";
 import { buildFrameDescription, evaluateSequence } from "../composite/composite";
-import type { FrameDescription, LayerDesc } from "../composite/composite";
+import type { FrameDescription } from "../composite/composite";
 import { selectActiveSequence, useProjectStore } from "../project/store";
-import type { MediaAsset } from "../project/types";
 import { videoPool } from "./VideoPool";
-
-/** 源时间偏差超过 80ms 才校正 currentTime（容忍解码抖动，防高频 seek 卡顿）。 */
-const SEEK_TOLERANCE_SEC = 0.08;
-/** HTMLVideoElement.playbackRate 合法区间，出界会抛 IndexSizeError。 */
-const RATE_MIN = 0.0625;
-const RATE_MAX = 16;
 
 export interface PlaybackApi {
   play(): void;
@@ -74,64 +67,19 @@ function tick(): void {
   rafId = requestAnimationFrame(tick);
 }
 
-/**
- * 把一帧的求值结果落到池元素上：
- * 显示＝最顶层视频块（M1 单层取景）；出声＝全部音频块；
- * 元素速率=speed、音量=gain（DOM 上限 1，gain>1 的放大 M2 交 WebAudio）；
- * 源时间偏差超阈才 seek。
- */
+/** 将统一求值结果送入 Canvas/WebAudio，保持预览与导出语义一致。 */
 function syncPool(desc: FrameDescription, playing: boolean): void {
-  const assets = useProjectStore.getState().document.assets;
-  const assetById = new Map<string, MediaAsset>(assets.map((a) => [a.id, a] as const));
-
-  // 每个素材取一个「驱动层」：先铺音频层，视频层后铺（同素材时画面优先对齐显示层）
-  const driverByAsset = new Map<string, LayerDesc>();
-  for (const layer of desc.audioLayers) driverByAsset.set(layer.assetId, layer);
-  for (const layer of desc.videoLayers) driverByAsset.set(layer.assetId, layer);
-  const audibleAssets = new Set(desc.audioLayers.map((l) => l.assetId));
-  const topVideoAssetId =
-    desc.videoLayers.length > 0 ? desc.videoLayers[desc.videoLayers.length - 1].assetId : null;
-
-  // 本帧需要的元素先确保进池
-  for (const assetId of driverByAsset.keys()) {
-    const asset = assetById.get(assetId);
-    if (asset) videoPool.acquire(asset);
-  }
-
-  for (const [assetId, el] of videoPool.entries()) {
-    const layer = driverByAsset.get(assetId);
-    const show = assetId === topVideoAssetId; // M1：只有最顶层视频块上画面
-    el.style.display = show ? "block" : "none";
-    if (!(el instanceof HTMLVideoElement)) continue; // img 定格：只管显隐
-    if (!layer) {
-      el.pause(); // 不在本帧：藏起来停走
-      continue;
-    }
-    el.playbackRate = Math.min(RATE_MAX, Math.max(RATE_MIN, layer.speed));
-    el.volume = Math.min(1, Math.max(0, layer.gain));
-    // 块内源时间＝入点 ＋ (t − 块起点) × speed
-    const targetSec = (layer.sourceInUs + (desc.tUs - layer.timelineStartUs) * layer.speed) / 1e6;
-    if (Math.abs(el.currentTime - targetSec) > SEEK_TOLERANCE_SEC) {
-      el.currentTime = Math.max(0, targetSec);
-    }
-    const shouldPlay = playing && (show || audibleAssets.has(assetId));
-    if (shouldPlay) {
-      void el.play().catch(() => {}); // 连续 seek 会打断 play（AbortError），吞掉等下一帧重试
-    } else {
-      el.pause();
-    }
-  }
+  const state = useProjectStore.getState();
+  const sequence = selectActiveSequence(state);
+  videoPool.sync(desc, state.document.assets, sequence.width, sequence.height, playing);
 }
 
-function pauseAllElements(): void {
-  for (const [, el] of videoPool.entries()) {
-    if (el instanceof HTMLVideoElement) el.pause();
-  }
-}
+function pauseAllElements(): void { videoPool.pauseAll(); }
 
 // ---- 对外 API（模块级函数，引用恒定） ----
 
 function play(): void {
+  videoPool.resumeAudio();
   const state = useProjectStore.getState();
   const totalUs = evaluateSequence(selectActiveSequence(state), state.document.assets).durationUs;
   if (totalUs > 0 && state.playheadUs >= totalUs) {
@@ -168,6 +116,10 @@ function stepFrame(deltaFrames: number): void {
 export function usePlayback(): PlaybackApi {
   useEffect(() => {
     if (useProjectStore.getState().isPlaying) startClock(); // 挂载时已在播（热重载/面板迟到）
+    const documentSubscription = useProjectStore.subscribe((s) => s.document, () => {
+      const state = useProjectStore.getState();
+      syncPool(buildFrameDescription(selectActiveSequence(state), state.playheadUs, state.document.assets), state.isPlaying);
+    });
     const unsubscribe = useProjectStore.subscribe(
       (s) => s.isPlaying,
       (playing) => {
@@ -181,6 +133,7 @@ export function usePlayback(): PlaybackApi {
     );
     return () => {
       unsubscribe();
+      documentSubscription();
       stopClock();
       pauseAllElements();
     };

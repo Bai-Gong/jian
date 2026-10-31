@@ -38,6 +38,7 @@ export function TrackHeader({ track }: TrackHeaderProps) {
         {track.name}
       </span>
       <div className="timeline-header__actions">
+        <button type="button" className={`timeline-icon-btn ${track.solo ? "is-on" : ""}`} title="独奏（仅播放独奏轨的音频）" aria-pressed={track.solo} onClick={()=>useProjectStore.getState().toggleTrackSolo(track.id)}>S</button>
         <button
           type="button"
           className={["timeline-icon-btn", track.muted ? "is-on" : ""].filter(Boolean).join(" ")}

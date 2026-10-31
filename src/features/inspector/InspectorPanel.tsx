@@ -13,9 +13,6 @@ import { basename } from "../media-bin/AssetCard";
 const KIND_LABEL: Record<MediaAsset["kind"], string> = { video: "视频", audio: "音频", image: "图片" };
 
 /** 静态值文案；关键帧形态 M1 不会出现（工厂全静态），兜底显示占位。 */
-function staticText(prop: Animatable<number>, format: (v: number) => string): string {
-  return prop.kind === "static" ? format(prop.value) : "关键帧（M2）";
-}
 
 /** 在活动序列里找选中块及其所在轨。 */
 function findSelectedClip(
@@ -37,6 +34,10 @@ export function InspectorPanel() {
   const picked =
     selection.length === 1 ? findSelectedClip(sequence, selection[0]!) : null;
   const asset = picked ? assets.find((a) => a.id === picked.clip.assetId) : undefined;
+  const control = (group:"transform"|"audio", name:string, prop:Animatable<number>, min?:number, max?:number, step=0.01) => prop.kind!=="static"
+    ? <span>关键帧（保留，暂不可编辑）</span>
+    : <input aria-label={name} type="number" value={prop.value} min={min} max={max} step={step} disabled={picked?.track.locked}
+        style={{width:76}} onChange={(event)=>{if(picked && event.target.value!=="")useProjectStore.getState().setClipProperty(picked.clip.id,group,name,Number(event.target.value));}} />;
 
   return (
     <DockPanel title="效果控件" collapsed={false} style={{ flex: 1, minHeight: 0 }}>
@@ -72,21 +73,22 @@ export function InspectorPanel() {
           <dl className="inspector__rows">
             <dt>位置 X / Y</dt>
             <dd>
-              {staticText(picked.clip.transform.x, (v) => v.toFixed(0))} /{" "}
-              {staticText(picked.clip.transform.y, (v) => v.toFixed(0))} px
+              {control("transform","x",picked.clip.transform.x,undefined,undefined,1)} /{" "}
+              {control("transform","y",picked.clip.transform.y,undefined,undefined,1)} px
             </dd>
             <dt>缩放</dt>
-            <dd>{staticText(picked.clip.transform.scale, (v) => `×${v.toFixed(2)}`)}</dd>
+            <dd>{control("transform","scale",picked.clip.transform.scale,0.01)}</dd>
             <dt>旋转</dt>
-            <dd>{staticText(picked.clip.transform.rotation, (v) => `${v.toFixed(1)}°`)}</dd>
+            <dd>{control("transform","rotation",picked.clip.transform.rotation,undefined,undefined,1)}°</dd>
             <dt>不透明度</dt>
-            <dd>{staticText(picked.clip.transform.opacity, (v) => `${Math.round(v * 100)}%`)}</dd>
+            <dd>{control("transform","opacity",picked.clip.transform.opacity,0,1)}</dd>
           </dl>
 
           <p className="inspector__section">音频</p>
           <dl className="inspector__rows">
             <dt>增益</dt>
-            <dd>{staticText(picked.clip.audio.gain, (v) => v.toFixed(2))}</dd>
+            <dd>{control("audio","gain",picked.clip.audio.gain,0,2)}</dd>
+            <dt>声像</dt><dd>{control("audio","pan",picked.clip.audio.pan,-1,1)}</dd>
             <dt>效果</dt>
             <dd>{picked.clip.effects.length} 个（编辑随 M2 开放）</dd>
           </dl>

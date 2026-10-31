@@ -61,26 +61,6 @@ pub struct FrameImage {
     pub height: u32,
 }
 
-/// 抽帧命令（前端 `extract_frame` 位，签名与 ffmpeg 单引擎时期一致）：
-/// 取 path 在 time_us 处的一帧写成临时目录下的 PNG，返回文件绝对路径。
-///
-/// 双引擎：默认 ye（MP4+H.264），失败回退 ffmpeg（warn 留痕）；
-/// `BJ_FRAME_ENGINE=ffmpeg` 强制 ffmpeg。
-pub fn extract_frame(path: String, time_us: i64) -> Result<String, String> {
-    let engine = frame_engine_from_env(std::env::var("BJ_FRAME_ENGINE").ok().as_deref());
-    match engine {
-        FrameEngine::FfmpegOnly => extract_frame_ffmpeg(&path, time_us),
-        FrameEngine::YeFirst => match extract_frame_ye(&path, time_us, None) {
-            Ok(img) => Ok(img.path),
-            Err(ye_err) => {
-                // ye 的 bug 不许静默：回退原因必须留痕（tauri-plugin-log 落到前端控制台）
-                log::warn!("ye 抽帧失败，回退 ffmpeg（{path}@{time_us}µs）：{ye_err}");
-                extract_frame_ffmpeg(&path, time_us)
-            }
-        },
-    }
-}
-
 // —— ye 引擎 ——
 
 /// ye 抽帧主链：seek 关键帧 → H.264 解码至目标帧 → 像素核转 RGBA →

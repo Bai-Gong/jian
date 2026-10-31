@@ -6,7 +6,7 @@
 
 ## 状态
 
-- **M0 工程骨架已落地**（2026-10-19）：Tauri 2 + React 19，接入 @baigong/fang（alias 联调轨），四区界面占位就位。
+- **静态多轨接线已落地**（2026-10-31）：Tauri 2 + React，Canvas 多层画面＋WebView原生解码＋WebAudio独立片段音频；冶提供导入探测、抽帧、对齐波形及时间线导出。
 - 技术选型与里程碑路线见 [docs/开发方案.md](docs/开发方案.md)；产品定位见 [docs/产品分析.md](docs/产品分析.md)。
 
 ## 开发
@@ -16,6 +16,12 @@
 - 常用命令：`npm install` → `npm run tauri dev`（开发窗口）；`npm run build` + `cargo check`（本地门禁，与 CI 同链）。
 
 ## 门禁与对拍（M2 引擎接线后）
+
+默认构建使用纯冶，不查找或执行 FFmpeg/ffprobe，不包含其二进制。当前素材范围：MP4/M4A、H.264 progressive 8-bit 4:2:0、AAC-LC 单/双声道。支持静态层序、中心偏移、等比缩放、顺时针旋转、透明度、黑场空隙、独立音轨、mute/solo、gain/pan。音频混合统一48kHz双声道；不做自动响度补偿。预览与导出均消费 evaluateSequence，预览继续使用原生媒体元素。
+
+在预览画面拖动移动、Shift拖动缩放、Alt拖动旋转；精确值在效果控件输入。已有关键帧、变速、效果、转场、图片等数据保留，Rust预检汇总导出阻塞原因；不会静默扁平化。导出支持取消，失败和取消仅清理自有临时文件，已有目标文件拒绝覆盖。
+
+`timeline_export` 集成测试生成参考素材后在空PATH子进程验收探测、抽帧、波形与两视频层＋两音轨导出。Windows 打包：`npm run package:windows`。开发兼容引擎须显式 `--features compat-ffmpeg`；兼容对拍命令为 `cargo test --manifest-path src-tauri/Cargo.toml --features compat-ffmpeg --test parity`。默认安装包不得加入开发工具资源。
 
 - **四件套**（本地门禁，与 CI 同链 + 集成测试）：
   `cargo check --manifest-path src-tauri/Cargo.toml --locked` →
@@ -29,5 +35,5 @@
 - **ffmpeg 定位口径**（与 ye 仓测试统一，§2.5）：① `BJ_FFMPEG_DIR`（须 ffmpeg+ffprobe
   双 exe 齐备）→ ② 系统 `PATH` → ③ 仓相对 `../../duan/src-tauri/binaries`（dev 机
   duan 落点）→ ④ 全落空：打印原因，对拍测试按分级语义合法跳过（定位器命中而向量
-  生成失败＝测试失败，不许跳过）。CI 只跑 `cargo check` 不跑对拍；本地收口须实跑
+  生成失败＝测试失败，不许跳过）。CI安装外部基准工具并跑默认测试；本地兼容对拍须实跑
   全绿（把 duan 的 `src-tauri/binaries` 加进 PATH 即三档全中）。

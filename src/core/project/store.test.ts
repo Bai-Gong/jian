@@ -86,6 +86,17 @@ function resetStore() {
 
 beforeEach(resetStore);
 
+it("static edits respect locked tracks and preserve animated properties",()=>{
+  const asset=makeAsset("video");state().addAssets([asset]);
+  const track=videoTrack(),id=state().insertClip({assetId:asset.id,trackId:track.id,timelineStartUs:0})!;
+  state().setClipProperty(id,"transform","x",42);expect(clipsOf(track.id)[0].transform.x).toEqual({kind:"static",value:42});
+  state().toggleTrackLock(track.id);state().setClipProperty(id,"audio","gain",2);expect(clipsOf(track.id)[0].audio.gain).toEqual({kind:"static",value:1});
+  state().toggleTrackLock(track.id);
+  const doc=structuredClone(state().document);doc.sequences[0].tracks.find((t)=>t.id===track.id)!.clips[0].transform.x={kind:"keyframed",keyframes:[{tUs:0,value:10,easing:"linear"}]};
+  useProjectStore.setState({document:doc});state().setClipProperty(id,"transform","x",99);expect(clipsOf(track.id)[0].transform.x.kind).toBe("keyframed");
+  state().setClipProperty(id,"audio","gain",3);expect(clipsOf(track.id)[0].audio.gain).toEqual({kind:"static",value:1});
+});
+
 describe("insertClip", () => {
   it("正常插入：返回新 id、块落在指定轨指定起点", () => {
     const asset = makeAsset("video");
@@ -282,5 +293,11 @@ describe("导出引擎偏好（persist）", () => {
     useProjectStore.getState().setExportEngine("ffmpeg");
     expect(useProjectStore.getState().exportEngine).toBe("ffmpeg");
   });
+});
+
+it("retains the prior engine choice when migrating to the pure runtime",async()=>{
+  testStorage.setItem("jian.project",JSON.stringify({version:1,state:{exportEngine:"ffmpeg"}}));
+  await useProjectStore.persist.rehydrate();
+  expect(state().exportEngine).toBe("ye");expect(state().legacyEngine).toBe("ffmpeg");
 });
 

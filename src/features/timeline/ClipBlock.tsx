@@ -10,6 +10,7 @@ import { useProjectStore } from "../../core/project/store";
 import { clipDurationUs, clipEndUs } from "../../core/project/timelineOps";
 import type { Clip, MediaAsset, Track } from "../../core/project/types";
 import { findSnapOffset, SNAP_THRESHOLD_PX, assetDisplayName } from "./timelineGeometry";
+import { ClipWaveform } from "./ClipWaveform";
 
 /** 位移超过该 px 才算拖动，否则视为点击（点选不触发 moveClip）。 */
 const DRAG_THRESHOLD_PX = 3;
@@ -132,6 +133,7 @@ export function ClipBlock({
     >
       <span className="timeline-clip__bar" aria-hidden="true" />
       <span className="timeline-clip__name">{name}</span>
+      {asset?.hasAudio && <ClipWaveform path={asset.path} clip={clip} width={widthPx} />}
     </div>
   );
 }

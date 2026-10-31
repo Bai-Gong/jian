@@ -17,6 +17,7 @@ mod ffmpeg;
 #[cfg(test)]
 mod frame;
 pub mod probe;
+pub mod runtime;
 pub mod waveform;
 pub mod ye_engine;
 
@@ -28,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            runtime::media_runtime_info,
             probe::probe_media,
             ffmpeg::ffmpeg_info,
             ffmpeg::extract_frame,
@@ -37,6 +39,8 @@ pub fn run() {
             ffmpeg::run_export,
             // ye 导出引擎（M4 接线轨）：与 run_export 同一事件契约，取消单列
             export_ye::run_export_ye,
+            export_ye::check_timeline_ye,
+            export_ye::run_timeline_ye,
             export_ye::cancel_export_ye,
         ])
         .run(tauri::generate_context!())

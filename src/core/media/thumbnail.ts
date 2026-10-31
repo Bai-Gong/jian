@@ -26,15 +26,7 @@ export function getThumbnail(assetId: string, timeUs = 0): Promise<string> {
   const job = (async () => {
     const asset = findAsset(assetId);
     // 两轨返回的都是临时 png 的绝对路径，转成 <img> 可用的 asset URL
-    let framePath: string;
-    try {
-      framePath = await invoke<string>("extract_frame_ye", { path: asset.path, timeUs });
-    } catch (yeErr) {
-      // 回退决策在前端：ye 轨任何 Err（能力面外等）都落 ffmpeg 轨，
-      // warn 留在现场供排查；ffmpeg 轨再失败则整体抛出（不吞错）。
-      console.warn("ye 抽帧失败，回退 ffmpeg 轨:", yeErr);
-      framePath = await invoke<string>("extract_frame", { path: asset.path, timeUs });
-    }
+    const framePath = await invoke<string>("extract_frame_ye", { path: asset.path, timeUs });
     return assetUrl(framePath);
   })();
   cache.set(key, job);

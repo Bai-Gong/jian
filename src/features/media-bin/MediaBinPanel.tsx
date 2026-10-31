@@ -47,7 +47,7 @@ export function MediaBinPanel() {
         </div>
         {assets.length === 0 ? (
           <p className="panel-placeholder">
-            素材池为空——点「导入素材」选择视频 / 音频 / 图片文件，双击卡片即可插入时间线。
+            素材池为空——点「导入素材」选择 MP4 / M4A 视频或音频，双击卡片即可插入时间线。
           </p>
         ) : (
           <ScrollArea orientation="vertical" className="media-bin__list">

@@ -29,7 +29,7 @@ describe("probeMedia", () => {
   it("缺省参数负载只有 path——importAssets 等既有调用零改动", async () => {
     await probeMedia("C:/media/demo.mp4");
     // engine: undefined 序列化时被丢弃，线上负载与 M1 完全一致（仅 path）
-    expect(invoke).toHaveBeenCalledWith("probe_media", { path: "C:/media/demo.mp4" });
+    expect(invoke).toHaveBeenCalledWith("probe_media", { path: "C:/media/demo.mp4", engine: "ye" });
   });
 
   it("engine 显式给定时原样透传，前端不做引擎决策", async () => {

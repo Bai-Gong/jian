@@ -45,6 +45,7 @@ export interface ProjectState {
   /** 导出引擎（M4 接线轨；持久化到 localStorage，仅此一项——document 的
    * 保存/加载归 M3 工程化，勿把会话态混进持久层）。 */
   exportEngine: ExportEngine;
+  legacyEngine?: ExportEngine;
   setExportEngine(engine: ExportEngine): void;
 
   addAssets(assets: MediaAsset[]): void;
@@ -67,6 +68,8 @@ export interface ProjectState {
   setPlaying(b: boolean): void;
   toggleTrackMute(trackId: string): void;
   toggleTrackLock(trackId: string): void;
+  toggleTrackSolo(trackId: string): void;
+  setClipProperty(clipId: string, group: "transform" | "audio", property: string, value: number): void;
 }
 
 /** 素材与轨的类型兼容：audio 素材只能进音频轨，video/image 进视频轨。 */
@@ -97,7 +100,7 @@ export const useProjectStore = create<ProjectState>()(
         selection: [],
         playheadUs: 0,
         isPlaying: false,
-        exportEngine: "ffmpeg",
+        exportEngine: "ye",
 
         setExportEngine: (engine) => set({ exportEngine: engine }),
 
@@ -284,14 +287,36 @@ export const useProjectStore = create<ProjectState>()(
         ),
       });
     },
+    toggleTrackSolo: (trackId) => {
+      const doc=get().document, seq=activeSequenceOf(doc); if (!seq) return;
+      set({document:withTracks(doc,seq.id,seq.tracks.map((t)=>t.id===trackId ? {...t,solo:!t.solo}:t))});
+    },
+    setClipProperty: (clipId, group, property, value) => {
+      if (!Number.isFinite(value)) return;
+      const allowed=group==="transform" ? ["x","y","scale","rotation","opacity"] : ["gain","pan"];
+      if (!allowed.includes(property)) return;
+      if ((property==="scale" && value<=0) || (property==="opacity" && (value<0 || value>1)) || (property==="gain" && (value<0 || value>2)) || (property==="pan" && (value< -1 || value>1))) return;
+      const doc=get().document, seq=activeSequenceOf(doc); if (!seq) return;
+      set({document:withTracks(doc,seq.id,seq.tracks.map((track)=> track.locked ? track : {...track,clips:track.clips.map((clip)=> {
+        if (clip.id!==clipId) return clip;
+        const propertyValue=Object.entries(clip[group]).find(([name])=>name===property)?.[1];
+        // Unsupported animation is preserved; editing cannot silently flatten it.
+        if (propertyValue?.kind!=="static") return clip;
+        return {...clip,[group]:{...clip[group],[property]:{kind:"static",value}}};
+      })}))});
+    },
       }),
       {
         name: PROJECT_STORAGE_KEY,
-        version: 1,
+        version: 2,
+        migrate: (persisted: unknown): Pick<ProjectState,"exportEngine"|"legacyEngine"> => {
+          const previous = persisted as Pick<ProjectState,"exportEngine"|"legacyEngine">;
+          return { ...previous, legacyEngine: previous.exportEngine, exportEngine: "ye" };
+        },
         // 只持久化导出引擎偏好（duan preset store 同款思路）：document 的
         // 工程保存/加载是 M3 里程碑的功能（含另定的文件格式），selection/
         // playhead/exportState 是会话态——都不得混进 localStorage。
-        partialize: (s) => ({ exportEngine: s.exportEngine }),
+        partialize: (s) => ({ exportEngine: s.exportEngine, legacyEngine:s.legacyEngine }),
       },
     ),
   ),

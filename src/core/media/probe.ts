@@ -34,6 +34,6 @@ export interface ProbeResult {
 
 /** 探测单个媒体文件；失败（无法识别/文件损坏）由 Rust 侧返回 Err，此处原样抛出。
  * engine 缺省不传（Rust 按 auto 处理）——importAssets 等既有调用的行为零改动。 */
-export function probeMedia(path: string, engine?: ProbeEngine): Promise<ProbeResult> {
+export function probeMedia(path: string, engine: ProbeEngine = "ye"): Promise<ProbeResult> {
   return invoke<ProbeResult>("probe_media", { path, engine });
 }

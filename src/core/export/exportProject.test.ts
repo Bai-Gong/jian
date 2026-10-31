@@ -42,7 +42,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 import type { Clip, MediaAsset, Sequence, Track, TrackKind } from "../project/types";
 import { createClip } from "../project/factory";
 import { useProjectStore } from "../project/store";
-import { exportProject } from "./exportProject";
+import { exportProject, cancelExport, ExportCancelled } from "./exportProject";
 
 function makeAsset(overrides: Partial<MediaAsset> = {}): MediaAsset {
   return {
@@ -84,6 +84,7 @@ function yeFriendly(): { sequence: Sequence; assets: MediaAsset[] } {
 
 beforeEach(() => {
   invokeMock.mockReset();
+  invokeMock.mockImplementation(async(command:string)=>command==="check_timeline_ye"?[]:null);
   listenMock.mockReset().mockResolvedValue(vi.fn()); // listen → unlisten
   useProjectStore.setState({
     exportState: { running: false, timeUs: 0, totalUs: 0, error: null },
@@ -92,6 +93,18 @@ beforeEach(() => {
 });
 
 describe("exportProject：引擎路由", () => {
+  it("listener failure restores the idle state",async()=>{
+    listenMock.mockRejectedValueOnce(new Error("event bridge failed"));const {sequence,assets}=yeFriendly();
+    await expect(exportProject(sequence,assets,"C:/out/failure.mp4")).rejects.toThrow("event bridge failed");
+    expect(useProjectStore.getState().exportState.running).toBe(false);
+  });
+  it("cancel during preflight never starts output",async()=>{
+    let finish!:(issues:string[])=>void;invokeMock.mockImplementationOnce(()=>new Promise<string[]>((resolve)=>{finish=resolve;}));
+    const {sequence,assets}=yeFriendly();const job=exportProject(sequence,assets,"C:/out/cancel.mp4",undefined,{getEngine:()=>"ye"});
+    const rejection=expect(job).rejects.toBeInstanceOf(ExportCancelled);
+    await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));await cancelExport();finish([]);await rejection;
+    expect(invokeMock).toHaveBeenCalledTimes(1);expect(useProjectStore.getState().exportState.error).toBeNull();
+  });
   it("ffmpeg 轨（缺省引擎）→ invoke run_export（argv 形态）", async () => {
     const { sequence, assets } = yeFriendly();
     await exportProject(sequence, assets, "C:/out/a.mp4");
@@ -112,32 +125,32 @@ describe("exportProject：引擎路由", () => {
     await exportProject(sequence, assets, "C:/out/b.mp4", undefined, {
       getEngine: () => "ye",
     });
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    const [command, payload] = invokeMock.mock.calls[0];
-    expect(command).toBe("run_export_ye");
-    expect(payload.segments).toEqual([
-      { path: assets[0].path, trimInUs: 0, trimOutUs: 6_000_000 },
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls[0][0]).toBe("check_timeline_ye");
+    const [command, payload] = invokeMock.mock.calls[1];
+    expect(command).toBe("run_timeline_ye");
+    expect(payload.request.clips).toEqual([
+      expect.objectContaining({ path: assets[0].path, sourceInUs: 0, sourceOutUs: 6_000_000,kind:"video" }),
+      expect.objectContaining({ path: assets[0].path, sourceInUs: 0, sourceOutUs: 6_000_000,kind:"audio" }),
     ]);
-    expect(payload.width).toBe(1920);
-    expect(payload.height).toBe(1080);
-    expect(payload.fpsNum).toBe(30);
-    expect(payload.fpsDen).toBe(1);
-    expect(payload.crf).toBe(23);
-    expect(payload.audioBitrateKbps).toBe(128);
-    expect(payload.stripAudio).toBe(false);
+    expect(payload.request.width).toBe(1920);
+    expect(payload.request.height).toBe(1080);
+    expect(payload.request.fpsNum).toBe(30);
+    expect(payload.request.fpsDen).toBe(1);
     expect(payload.outPath).toBe("C:/out/b.mp4");
-    expect(payload.totalUs).toBe(6_000_000);
+    expect(payload.request.totalUs).toBe(6_000_000);
   });
 
   it("ye 轨 + store 引擎偏好（未注入 getEngine 时读 store）", async () => {
     useProjectStore.setState({ exportEngine: "ye" });
     const { sequence, assets } = yeFriendly();
     await exportProject(sequence, assets, "C:/out/c.mp4");
-    expect(invokeMock.mock.calls[0][0]).toBe("run_export_ye");
+    expect(invokeMock.mock.calls[1][0]).toBe("run_timeline_ye");
   });
 
   it("ye 轨 + 能力面外序列（变速）→ 抛拒绝文案、不触 run_export_ye", async () => {
     const asset = makeAsset();
+    invokeMock.mockResolvedValueOnce(["片段：暂不支持变速","片段：暂不支持转场"]);
     const sequence = makeSequence([
       makeTrack("video", "t-v1", [
         createClip({ assetId: asset.id, sourceInUs: 0, sourceOutUs: 6_000_000, timelineStartUs: 0, speed: 2 }),
@@ -145,8 +158,9 @@ describe("exportProject：引擎路由", () => {
     ]);
     await expect(
       exportProject(sequence, [asset], "C:/out/d.mp4", undefined, { getEngine: () => "ye" }),
-    ).rejects.toThrow("ffmpeg 引擎");
-    expect(invokeMock).not.toHaveBeenCalled();
+    ).rejects.toThrow("暂不支持变速");
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][1].request.features[0].speed).toBe(2);
     // 失败留底：exportState.error 带拒绝文案、running 复位
     const state = useProjectStore.getState().exportState;
     expect(state.running).toBe(false);

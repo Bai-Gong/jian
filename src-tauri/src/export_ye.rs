@@ -23,7 +23,7 @@
 //! pub 供集成测试（tests/export_ye_e2e.rs）直调。
 
 use std::fs::File;
-use std::io::{BufReader};
+use std::io::BufReader;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -37,6 +37,295 @@ use ye::convert::{AudioEncodeSettings, ConvertStats};
 /// 取消旗标表（单槽）：run_export_ye 登记本地 Arc、收尾摘除；
 /// cancel_export_ye 置位。剪同时至多一个导出任务（见模块文档）。
 static CANCEL_SLOT: LazyLock<Mutex<Option<Arc<AtomicBool>>>> = LazyLock::new(|| Mutex::new(None));
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineRequest {
+    pub width: u32,
+    pub height: u32,
+    pub fps_num: i32,
+    pub fps_den: i32,
+    pub total_us: i64,
+    pub clips: Vec<TimelineLayerArg>,
+    pub features: Vec<TimelineFeatureArg>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineFeatureArg {
+    pub label: String,
+    pub source_kind: String,
+    pub speed: f64,
+    pub animated: Vec<String>,
+    pub effects: usize,
+    pub transition: bool,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineLayerArg {
+    pub path: String,
+    pub source_in_us: i64,
+    pub source_out_us: i64,
+    pub timeline_start_us: i64,
+    pub timeline_end_us: i64,
+    #[serde(flatten)]
+    pub layer: TimelineLayerKind,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TimelineLayerKind {
+    Video {
+        x: f64,
+        y: f64,
+        scale: f64,
+        rotation: f64,
+        opacity: f64,
+        z: i32,
+    },
+    Audio {
+        gain: f32,
+        pan: f32,
+    },
+}
+fn timeline_registries() -> (ye::container::ContainerRegistry, ye::codec::CodecRegistry) {
+    let mut containers = ye::container::ContainerRegistry::new();
+    ye::container::mp4::register_mp4(&mut containers);
+    let mut codecs = ye::codec::CodecRegistry::new();
+    ye::codec_h264::register_h264(&mut codecs);
+    ye::codec_h264::register_h264_encoder(&mut codecs);
+    ye::codec_aac::register_aac(&mut codecs);
+    ye::codec_aac::register_aac_encoder(&mut codecs);
+    (containers, codecs)
+}
+fn timeline_settings(request: &TimelineRequest) -> Result<ye::compose::ComposeSettings, String> {
+    if request.fps_num <= 0 || request.fps_den <= 0 {
+        return Err("帧率须为正有理数".into());
+    }
+    Ok(ye::compose::ComposeSettings {
+        width: request.width,
+        height: request.height,
+        frame_rate: ye::time::Rational::new(request.fps_num, request.fps_den),
+        gop: 250,
+        quality: ye::codec::QualityMode::Crf(23),
+        bit_rate: None,
+        audio: if request
+            .clips
+            .iter()
+            .any(|c| matches!(c.layer, TimelineLayerKind::Audio { .. }))
+        {
+            AudioEncodeSettings::Aac {
+                bitrate_bps: 128000,
+            }
+        } else {
+            AudioEncodeSettings::Drop
+        },
+    })
+}
+fn timeline_layer(
+    arg: &TimelineLayerArg,
+    input: Box<dyn ye::container::ReadSeek>,
+) -> ye::timeline::TimelineClip {
+    ye::timeline::TimelineClip {
+        input,
+        source_in_us: arg.source_in_us,
+        source_out_us: arg.source_out_us,
+        timeline_start_us: arg.timeline_start_us,
+        timeline_end_us: arg.timeline_end_us,
+        layer: match arg.layer {
+            TimelineLayerKind::Video {
+                x,
+                y,
+                scale,
+                rotation,
+                opacity,
+                z,
+            } => ye::timeline::Layer::Video(ye::timeline::Transform {
+                x,
+                y,
+                scale,
+                rotation,
+                opacity,
+                z,
+            }),
+            TimelineLayerKind::Audio { gain, pan } => {
+                ye::timeline::Layer::Audio(ye::timeline::AudioMix { gain, pan })
+            }
+        },
+    }
+}
+
+/// Full backend preflight. It does not modify the saved project or its properties.
+pub fn timeline_issues(request: &TimelineRequest) -> Vec<String> {
+    let mut issues = Vec::new();
+    for f in &request.features {
+        if !["video", "audio"].contains(&f.source_kind.as_str()) {
+            issues.push(format!(
+                "{}：素材类型 {} 暂不支持或素材丢失",
+                f.label, f.source_kind
+            ));
+        }
+        if f.speed != 1.0 {
+            issues.push(format!("{}：暂不支持变速", f.label));
+        }
+        if !f.animated.is_empty() {
+            issues.push(format!(
+                "{}：暂不支持关键帧（{}）",
+                f.label,
+                f.animated.join("、")
+            ));
+        }
+        if f.effects > 0 {
+            issues.push(format!("{}：暂不支持效果滤镜", f.label));
+        }
+        if f.transition {
+            issues.push(format!("{}：暂不支持转场", f.label));
+        }
+    }
+    let settings = match timeline_settings(request) {
+        Ok(s) => s,
+        Err(e) => {
+            issues.push(e);
+            return issues;
+        }
+    };
+    let shape: Vec<_> = request
+        .clips
+        .iter()
+        .map(|c| timeline_layer(c, Box::new(std::io::Cursor::new(Vec::<u8>::new()))))
+        .collect();
+    issues.extend(ye::timeline::check_timeline(
+        &shape,
+        &settings,
+        request.total_us,
+    ));
+    let (_, codecs) = timeline_registries();
+    for c in &request.clips {
+        let header = File::open(&c.path)
+            .map_err(|e| e.to_string())
+            .and_then(|file| {
+                ye::media::inspect(Box::new(BufReader::new(file))).map_err(|e| e.to_string())
+            });
+        match header {
+            Err(e) => issues.push(format!("{}：{e}", c.path)),
+            Ok(h) => {
+                let video = matches!(c.layer, TimelineLayerKind::Video { .. });
+                for issue in ye::media::validate_decoding(&h, &codecs, video, !video) {
+                    issues.push(format!("{}：{}", c.path, issue.reason));
+                }
+                let kind = if video {
+                    ye::codec::MediaType::Video
+                } else {
+                    ye::codec::MediaType::Audio
+                };
+                if let Some(stream) = h.streams.iter().find(|s| s.media_type == kind) {
+                    if !video
+                        && stream
+                            .codec
+                            .audio
+                            .as_ref()
+                            .is_some_and(|a| ![44100, 48000].contains(&a.sample_rate))
+                    {
+                        issues.push(format!("{}：音频须为44.1/48kHz", c.path));
+                    }
+                    if let Some(d) = stream.duration {
+                        let end = d.checked_add(
+                            stream
+                                .start_time
+                                .unwrap_or(ye::time::Timestamp::new(0, stream.time_base)),
+                        );
+                        if end.is_ok_and(|end| {
+                            end.rescale(ye::time::Rational::new(1, 1000000))
+                                .is_ok_and(|end| c.source_out_us > end.ticks())
+                        }) {
+                            issues.push(format!("{}：源窗口超出素材时长", c.path));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    issues
+}
+#[tauri::command(async)]
+pub fn check_timeline_ye(request: TimelineRequest) -> Vec<String> {
+    timeline_issues(&request)
+}
+
+pub fn timeline_export_impl(
+    request: &TimelineRequest,
+    output: &Path,
+    cancel: &AtomicBool,
+    progress: &dyn Fn(i64, i64),
+) -> Result<ConvertStats, String> {
+    let issues = timeline_issues(request);
+    if !issues.is_empty() {
+        return Err(issues.join("\n"));
+    }
+    let settings = timeline_settings(request)?;
+    let clips: Result<Vec<_>, String> = request
+        .clips
+        .iter()
+        .map(|c| {
+            Ok(timeline_layer(
+                c,
+                Box::new(BufReader::new(
+                    File::open(&c.path).map_err(|e| format!("{}: {e}", c.path))?,
+                )),
+            ))
+        })
+        .collect();
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let transaction = ye::output::OutputTransaction::new(output).map_err(|e| e.to_string())?;
+    let writer = transaction.writer().map_err(|e| e.to_string())?;
+    let (containers, codecs) = timeline_registries();
+    let result = ye::timeline::render(
+        &containers,
+        &codecs,
+        clips?,
+        "mp4",
+        Box::new(writer),
+        &settings,
+        request.total_us,
+        progress,
+        cancel,
+    )
+    .map_err(|e| e.to_string())?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("用户取消".into());
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    Ok(result)
+}
+
+#[tauri::command(async)]
+pub fn run_timeline_ye(
+    app: tauri::AppHandle,
+    request: TimelineRequest,
+    out_path: String,
+) -> Result<(), String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = CANCEL_SLOT.lock().map_err(|_| "取消旗标锁失败")?;
+        if slot.is_some() {
+            return Err("已有导出任务正在执行".into());
+        }
+        *slot = Some(cancel.clone());
+    }
+    let result = timeline_export_impl(
+        &request,
+        Path::new(&out_path),
+        &cancel,
+        &|time_us, total_us| {
+            let _ = app.emit("export-progress", ExportProgress { time_us, total_us });
+        },
+    );
+    let mut slot = CANCEL_SLOT.lock().map_err(|_| "取消旗标锁失败")?;
+    if slot.as_ref().is_some_and(|c| Arc::ptr_eq(c, &cancel)) {
+        *slot = None;
+    }
+    result.map(|_| ())
+}
 
 /// 码率上限（kbps）：命令入参的形状校验用（对齐 duan ye_engine 的
 /// MAX_KBPS——远超现实导出需求，挡住溢出/单位填错的病态值）。
@@ -157,9 +446,7 @@ pub fn export_ye_impl(
     cancel: &AtomicBool,
     progress: &dyn Fn(i64, i64),
 ) -> Result<ConvertStats, String> {
-    let result = run_ye_export(segments, output, spec, cancel, progress);
-
-    result
+    run_ye_export(segments, output, spec, cancel, progress)
 }
 
 fn run_ye_export(
@@ -192,7 +479,8 @@ fn run_ye_export(
         .collect();
     let compose_segments = compose_segments?;
 
-    let transaction = ye::output::OutputTransaction::new(output).map_err(|e| format!("{}: {e}", output.display()))?;
+    let transaction = ye::output::OutputTransaction::new(output)
+        .map_err(|e| format!("{}: {e}", output.display()))?;
     let out_file = transaction.writer().map_err(|e| e.to_string())?;
     let settings = ye::compose::ComposeSettings {
         width: spec.size.0,
