@@ -1,7 +1,7 @@
 # 百工·剪发布 —— main 分支：门禁复跑 + Windows 正式安装包 + GitHub Release。
 # Release 以 tauri.conf.json 的版本号打 tag（v{version}）；
 # 每次正式发布前请先在 main 上提升版本号，未提升时将更新同名 Release。
-# M1 起 ffmpeg sidecar 落地后，打包前需先执行下载脚本（docs/开发方案.md 3.2）。
+# 默认构建仅携带冶，不下载或捆绑 FFmpeg 工具。
 
 name: 发布流水线 (main)
 

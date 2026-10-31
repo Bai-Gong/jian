@@ -1,6 +1,6 @@
 # 百工·剪 QA —— qa 分支：门禁复跑 + Windows 试用安装包。
 # 三分支分工：develop 门禁 / qa 本文件 / main 正式发布。
-# M1 起 ffmpeg sidecar 落地后，打包前需先执行下载脚本（docs/开发方案.md 3.2）。
+# 默认构建仅携带冶，不下载或捆绑 FFmpeg 工具。
 
 name: QA 流水线 (qa)
 

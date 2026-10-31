@@ -85,3 +85,39 @@ jobs:
       # FFmpeg 仅用于开发/CI 参考比对，默认产品运行期不调用外部工具。
       - name: cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+  windows-package:
+    name: 纯冶安装包 (Windows)
+    needs: [web-gate, rust-gate]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检出固定坊提交
+        uses: actions/checkout@v4
+        with:
+          repository: Bai-Gong/fang
+          ref: 21c522dba3c1444060c5cd6ebd4e6760d21f9b38
+          path: fang
+      - name: 坊移至兄弟目录
+        run: Move-Item -LiteralPath fang -Destination ../fang
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: 安装依赖
+        run: |
+          npm ci --prefix ../fang
+          npm ci
+      # 不下载 FFmpeg；打包脚本会检查实际 NSIS 载荷清单。
+      - name: 构建并检查纯冶安装包
+        run: npm run package:windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pure-ye-windows-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error
