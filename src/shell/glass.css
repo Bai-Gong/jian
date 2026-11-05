@@ -153,3 +153,14 @@
   padding-left: 88px !important;
 }
 :root[data-native-material="macos"] .workspace-menubar > div:last-child { display: none !important; }
+
+.project-error { display: flex; align-items: center; gap: 16px; padding: 10px 18px; color: var(--fang-color-danger); background: var(--fang-glass-panel); border-bottom: 1px solid var(--fang-color-border); }
+.project-error span { flex: 1; overflow-wrap: anywhere; }
+.project-error button { border: 0; background: none; color: inherit; cursor: pointer; flex: none; }
+.project-confirm { width: 460px; max-width: calc(100vw - 40px); color: var(--fang-color-text); background: var(--fang-glass-panel); border: 1px solid var(--glass-edge); border-radius: 16px; padding: 26px; box-shadow: var(--glass-shadow); }
+.project-confirm::backdrop { background: #102a3655; backdrop-filter: blur(5px); }
+.project-confirm h2 { margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+.project-confirm p { font-size: 12px; color: var(--fang-color-text-secondary); line-height: 1.8; overflow-wrap: anywhere; }
+.project-confirm__actions { display: flex; gap: 10px; margin-top: 25px; }
+.project-confirm__actions span { flex: 1; }
+.project-confirm__actions .btn { padding: 8px 16px; }

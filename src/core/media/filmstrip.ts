@@ -7,6 +7,8 @@ interface Job { key: string; path: string; timeUs: number; waiters: Set<Waiter> 
 const pending = new Map<string, Job>();
 const queue: Job[] = [];
 let active = 0;
+let generation = 0;
+export function clearFilmstripCache(): void { generation++; cache.clear(); }
 const MAX_ACTIVE = 2, MAX_CACHED = 256;
 function abortError() { return new DOMException("缩略图请求已取消", "AbortError"); }
 function pump() {
@@ -30,7 +32,7 @@ function pump() {
 /** Share visible requests; discard queued work as soon as all its cells scroll away. */
 export function getFilmstripThumbnail(path: string, timeUs: number, signal: AbortSignal, assetId = path): Promise<string> {
   if (signal.aborted) return Promise.reject(abortError());
-  const key = JSON.stringify([assetId, path, timeUs]);
+  const key = JSON.stringify([generation, assetId, path, timeUs]);
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return Promise.resolve(hit); }
   let job = pending.get(key);

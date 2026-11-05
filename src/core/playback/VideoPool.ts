@@ -74,6 +74,14 @@ export class VideoPool {
     for (const el of this.elements.values()) if (el instanceof HTMLVideoElement) el.pause();
     for (const route of this.routes.values()) { route.left.gain.value = 0; route.right.gain.value = 0; }
   }
+  /** Drop media elements and pending preview associations when changing projects. */
+  reset(): void {
+    this.pauseAll();
+    for (const key of [...this.elements.keys()]) this.release(key);
+    this.last = null;
+    this.selected.clear();
+    if (this.canvas) this.canvas.getContext("2d")?.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
   resumeAudio(): void {
     this.context ??= new AudioContext({ sampleRate: 48000 });
     if (!this.master) { this.master = this.context.createGain(); this.master.gain.value = this.masterMuted ? 0 : 1; this.master.connect(this.context.destination); }

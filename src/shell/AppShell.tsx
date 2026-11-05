@@ -3,6 +3,8 @@ import { ThemeProvider } from "@baigong/fang";
 import { useEffect, type CSSProperties } from "react";
 import { loadRuntime } from "../core/media/runtime";
 import "@baigong/fang/tokens.css";
+import { ProjectLifecycle } from "./ProjectLifecycle";
+import { useProjectSession } from "../core/project/projectSession";
 import { AppTitleBar } from "./AppTitleBar";
 import { MediaBinPanel } from "../features/media-bin/MediaBinPanel";
 import { PreviewPanel } from "../features/preview/PreviewPanel";
@@ -17,6 +19,8 @@ import "./glass.css";
 /** 毛玻璃剪辑工作区：预览与时间线居中，属性和素材在右侧停靠。 */
 export function AppShell() {
   useEffect(()=>{if (isTauri()) void loadRuntime();},[]);
+  const projectBusy = useProjectSession(s => s.busy);
+  const generation = useProjectSession(s => s.generation);
   const exportError=useProjectStore((s)=>s.exportState.error);
   const panel = useWorkspace(s=>s.panel);
   const rightWidth = useWorkspace(s=>s.rightWidth);
@@ -25,9 +29,10 @@ export function AppShell() {
     <ThemeProvider>
       <div className="app-shell glass-workspace fang-glass-shell" style={{ "--right-width": `${rightWidth}px`, "--timeline-height": `${timelineHeight}px` } as CSSProperties}>
         <AppTitleBar />
-        <ToolOptions />
+        <ProjectLifecycle />
+        <div inert={projectBusy}><ToolOptions /></div>
         {exportError && <details className="export-errors" open><summary>导出未完成</summary><pre>{exportError}</pre><button type="button" onClick={()=>useProjectStore.getState().setExportState({error:null})}>收起原因</button></details>}
-        <div className="editing-workspace">
+        <div className="editing-workspace" key={generation} inert={projectBusy}>
           <div className="editing-top">
             <aside className="source-dock fang-glass-surface" aria-label="项目素材">
               <header className="section-caption"><strong>项目素材</strong><span>收集与整理</span></header>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import { invoke } from "@tauri-apps/api/core";
-import { getFilmstripThumbnail } from "./filmstrip";
+import { clearFilmstripCache, getFilmstripThumbnail } from "./filmstrip";
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 describe("visible filmstrip decode queue", () => {
   it("shares requests, limits concurrent decode to two and drops offscreen queued work", async () => {
@@ -39,5 +39,16 @@ describe("visible filmstrip decode queue", () => {
     const old = await getFilmstripThumbnail("replace.mp4", 0, signal, "old-import");
     const current = await getFilmstripThumbnail("replace.mp4", 0, signal, "new-import");
     expect(current).not.toBe(old);
+  });
+  it("does not reuse an in-flight thumbnail after a project switch", async () => {
+    let finishOld!: (bytes: number[]) => void;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve as (bytes: number[]) => void; }))
+      .mockResolvedValueOnce([2]);
+    const signal = new AbortController().signal;
+    const old = getFilmstripThumbnail("same.mp4", 0, signal, "same-id");
+    clearFilmstripCache();
+    const current = getFilmstripThumbnail("same.mp4", 0, signal, "same-id");
+    finishOld([1]);
+    expect(await current).not.toBe(await old);
   });
 });

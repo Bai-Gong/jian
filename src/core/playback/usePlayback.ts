@@ -15,6 +15,10 @@ import { buildFrameDescription, evaluateSequence } from "../composite/composite"
 import type { FrameDescription } from "../composite/composite";
 import { selectActiveSequence, useProjectStore } from "../project/store";
 import { videoPool } from "./VideoPool";
+import { clearThumbnailCache } from "../media/thumbnail";
+import { clearFilmstripCache } from "../media/filmstrip";
+import { clearAudioPreviewCache } from "../media/audioPreview";
+import { registerProjectSwitchHook } from "../project/projectSession";
 
 export interface PlaybackApi {
   play(): void;
@@ -79,6 +83,14 @@ function pauseAllElements(): void { videoPool.pauseAll(); }
 // ---- 对外 API（模块级函数，引用恒定） ----
 
 let playRequest=0;
+registerProjectSwitchHook(() => {
+  playRequest++;
+  stopClock();
+  videoPool.reset();
+  clearThumbnailCache();
+  clearFilmstripCache();
+  clearAudioPreviewCache();
+});
 function play(): void {
   const request=++playRequest;
   videoPool.resumeAudio();

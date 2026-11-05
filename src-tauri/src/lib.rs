@@ -12,6 +12,11 @@
 // probe/waveform/ye_engine/export_ye 四模块 pub 供单元测试与集成测试
 // （tests/parity.rs 对拍、tests/export_ye_e2e.rs 端到端）直调生产路径
 // （duan lib.rs 同款先例）；ffmpeg 模块无直调需求，保持私有。
+use tauri::{Emitter, Manager};
+
+#[cfg(target_os = "macos")]
+mod shell_menu;
+
 pub mod audio_preview;
 pub mod export_ye;
 mod ffmpeg;
@@ -32,6 +37,13 @@ pub fn run() {
         previous_hook(info);
     }));
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            shell_menu::install(app)?;
+            #[cfg(not(target_os = "macos"))]
+            let _ = app;
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -56,9 +68,18 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building jian")
-        .run(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                audio_preview::cleanup();
+        .run(|app, event| match event {
+            // Route native Quit through the same unsaved-project guard as window close.
+            // Once the confirmed frontend destroys the last window, allow normal exit.
+            tauri::RunEvent::ExitRequested { api, code, .. }
+                if code.is_none() && app.get_webview_window("main").is_some() =>
+            {
+                api.prevent_exit();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.emit("project-close-requested", ());
+                }
             }
+            tauri::RunEvent::Exit => audio_preview::cleanup(),
+            _ => {}
         });
 }

@@ -6,6 +6,8 @@ import { assetUrl } from "./assetUrl";
 
 const cache = new Map<string, Promise<string>>();
 
+export function clearThumbnailCache(): void { cache.clear(); }
+
 function findAsset(assetId: string) {
   const asset = useProjectStore.getState().document.assets.find((a) => a.id === assetId);
   if (!asset) throw new Error(`素材不存在：${assetId}`);
@@ -24,6 +26,6 @@ export function getThumbnail(assetId: string, timeUs = 0): Promise<string> {
     return assetUrl(framePath);
   })();
   cache.set(key, job);
-  job.catch(() => cache.delete(key)); // 失败不占缓存位
+  job.catch(() => { if (cache.get(key) === job) cache.delete(key); }); // 失败不占缓存位
   return job;
 }

@@ -6,6 +6,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../project/store";
 import type { MediaAsset } from "../project/types";
 import { probeMedia } from "./probe";
+import { beginProjectImport } from "../project/projectSession";
 
 /** 与 Rust classify_media_kind 的图片扩展名集合对齐（gif 走视频支，有真实 fps）。 */
 const MEDIA_FILTER_EXTENSIONS = [
@@ -16,6 +17,16 @@ const MEDIA_FILTER_EXTENSIONS = [
 
 /** 弹出导入对话框并完成探测入池；返回本轮成功导入的素材（取消/全失败为空数组）。 */
 export async function importAssets(): Promise<MediaAsset[]> {
+  const release = beginProjectImport();
+  if (!release) return [];
+  try {
+    return await importAssetsInSession();
+  } finally {
+    release();
+  }
+}
+
+async function importAssetsInSession(): Promise<MediaAsset[]> {
   const selected = await openFileDialog({
     multiple: true,
     directory: false,

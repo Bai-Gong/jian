@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { getWaveformPeaks, getStreamWaveformPeaks, type WaveformPeaks } from "../../core/media/waveform";
 import type { Clip } from "../../core/project/types";
+import { registerProjectSwitchHook } from "../../core/project/projectSession";
 const pending = new Map<string,Promise<WaveformPeaks>>();
+registerProjectSwitchHook(() => pending.clear());
 function waveform(path:string,streamIndex?:number):Promise<WaveformPeaks> {
   const key=`${path}:${streamIndex??"single"}`;const cached=pending.get(key);if(cached)return cached;
-  const job=streamIndex===undefined?getWaveformPeaks(path,1024):getStreamWaveformPeaks(path,1024,streamIndex);pending.set(key,job);job.catch(()=>pending.delete(key));return job;
+  const job=streamIndex===undefined?getWaveformPeaks(path,1024):getStreamWaveformPeaks(path,1024,streamIndex);pending.set(key,job);job.catch(()=>{if(pending.get(key)===job)pending.delete(key);});return job;
 }
 export function ClipWaveform({path,clip,width}:{path:string;clip:Clip;width:number}) {
   const canvas=useRef<HTMLCanvasElement>(null),[peaks,setPeaks]=useState<WaveformPeaks|null>(null),[error,setError]=useState("");

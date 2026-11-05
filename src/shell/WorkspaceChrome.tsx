@@ -1,3 +1,5 @@
+import { useProjectSession } from "../core/project/projectSession";
+import { projectDisplayName } from "./ProjectLifecycle";
 import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Move, Scaling, RotateCw, Hand, ZoomIn, Upload, Maximize, ChevronDown, Film, Music2, LockKeyhole, Volume2, VolumeX, Plus, Trash2, PanelRight, SlidersHorizontal } from "lucide-react";
@@ -72,10 +74,12 @@ export function ToolOptions() {
 }
 
 export function DocumentTab() {
+  const path = useProjectSession(s => s.path);
+  const dirty = useProjectSession(s => s.dirty);
   const name = useProjectStore((s) => s.document.name);
   const sequence = useProjectStore(selectActiveSequence);
   const scale = useWorkspace((s) => s.canvasScale);
-  return <div className="document-tabs"><div className="document-tab"><Film size={13} /><span>{name}</span><small>@ {Math.round(scale * 100)}% · {sequence.width} × {sequence.height}</small></div><span className="document-tabs__space" /></div>;
+  return <div className="document-tabs"><div className="document-tab"><Film size={13} /><span title={path ?? "尚未保存到项目文件"}>{dirty ? "● " : ""}{projectDisplayName(path, name)}</span><small>@ {Math.round(scale * 100)}% · {sequence.width} × {sequence.height}</small></div><span className="document-tabs__space" /></div>;
 }
 
 export function LayersPanel() {

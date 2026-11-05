@@ -35,6 +35,8 @@ export interface ExportState {
 
 export interface ProjectState {
   document: ProjectDocument;
+  /** 工程切换入口：同时复位播放、选择与上轮导出结果。 */
+  replaceDocument(document: ProjectDocument): void;
   /** 选中块 id 列表（M1 无轨选中概念）。 */
   selection: string[];
   playheadUs: number;
@@ -98,6 +100,13 @@ export const useProjectStore = create<ProjectState>()(
     persist(
       (set, get) => ({
         document: createInitialDocument(),
+        replaceDocument: (document) => set({
+          document,
+          selection: [],
+          playheadUs: 0,
+          isPlaying: false,
+          exportState: { running: false, timeUs: 0, totalUs: 0, error: null },
+        }),
         selection: [],
         playheadUs: 0,
         isPlaying: false,
