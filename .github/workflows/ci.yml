@@ -23,25 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # fang 走 alias 联调轨（vite alias + tsconfig paths 指向 ../fang/src，开发方案 3.6），
-      # runner 只有本仓库，须把 fang 检出为兄弟目录，否则 tsc 报 Cannot find module '@baigong/fang'。
-      # 仓库私有化或 fang 上 registry 后此步骤移除（开发方案推迟项）。
-      - name: 检出 fang（alias 联调的兄弟仓库）
-        uses: actions/checkout@v4
-        with:
-          repository: Bai-Gong/fang
-          ref: 21c522dba3c1444060c5cd6ebd4e6760d21f9b38
-          path: fang
-      # checkout 只允许工作区内路径，检出到 fang/ 后挪到兄弟目录 ../fang
-      - name: fang 挪到兄弟目录
-        run: mv fang ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      # fang 源码里的 import "react" 从 fang 自己的 node_modules 向上解析，裸检出会 TS2307
-      - name: 安装 fang 依赖
-        run: npm ci --prefix ../fang
       - name: 安装依赖并构建
         run: |
           npm ci
@@ -92,14 +77,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 检出固定坊提交
-        uses: actions/checkout@v4
-        with:
-          repository: Bai-Gong/fang
-          ref: 21c522dba3c1444060c5cd6ebd4e6760d21f9b38
-          path: fang
-      - name: 坊移至兄弟目录
-        run: Move-Item -LiteralPath fang -Destination ../fang
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -110,7 +87,6 @@ jobs:
           workspaces: src-tauri
       - name: 安装依赖
         run: |
-          npm ci --prefix ../fang
           npm ci
       # 不下载 FFmpeg；打包脚本会检查实际 NSIS 载荷清单。
       - name: 构建并检查纯冶安装包

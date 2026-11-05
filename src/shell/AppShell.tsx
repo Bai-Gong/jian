@@ -23,23 +23,23 @@ export function AppShell() {
   const timelineHeight = useWorkspace(s=>s.timelineHeight);
   return (
     <ThemeProvider>
-      <div className="app-shell glass-workspace" style={{ "--right-width": `${rightWidth}px`, "--timeline-height": `${timelineHeight}px` } as CSSProperties}>
+      <div className="app-shell glass-workspace fang-glass-shell" style={{ "--right-width": `${rightWidth}px`, "--timeline-height": `${timelineHeight}px` } as CSSProperties}>
         <AppTitleBar />
         <ToolOptions />
         {exportError && <details className="export-errors" open><summary>导出未完成</summary><pre>{exportError}</pre><button type="button" onClick={()=>useProjectStore.getState().setExportState({error:null})}>收起原因</button></details>}
         <div className="editing-workspace">
           <div className="editing-top">
-            <aside className="source-dock" aria-label="项目素材">
+            <aside className="source-dock fang-glass-surface" aria-label="项目素材">
               <header className="section-caption"><strong>项目素材</strong><span>收集与整理</span></header>
               <MediaBinPanel />
             </aside>
-            <main className="document-workspace" aria-label="节目预览">
+            <main className="document-workspace fang-glass-surface" aria-label="节目预览">
               <DocumentTab />
               <div className="document-view"><PreviewPanel /></div>
             </main>
             <WorkspaceDivider direction="vertical" />
             <aside className="panel-dock" aria-label="检查器">
-              <div className="panel-dock__top">
+              <div className="panel-dock__top fang-glass-surface">
                 <div className="panel-tabs" role="tablist" aria-label="片段与轨道">
                   <button type="button" role="tab" id="properties-tab" aria-selected={panel === "properties"} aria-controls="properties-panel" onClick={() => useWorkspace.getState().setPanel("properties")}>片段属性</button>
                   <button type="button" role="tab" id="tracks-tab" aria-selected={panel === "tracks"} aria-controls="tracks-panel" onClick={() => useWorkspace.getState().setPanel("tracks")}>轨道管理</button>
@@ -52,7 +52,7 @@ export function AppShell() {
           <WorkspaceDivider direction="horizontal" />
           <section className="editing-bottom" aria-label="时间线编辑">
             <ToolRail />
-            <div className="timeline-dock"><TimelinePanel /></div>
+            <div className="timeline-dock fang-glass-surface"><TimelinePanel /></div>
           </section>
         </div>
         <WorkspaceStatus />

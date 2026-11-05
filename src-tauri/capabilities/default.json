@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
@@ -13,8 +15,31 @@
     "opener:default",
     "log:default",
     "fs:default",
-    { "identifier": "fs:allow-read-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-write-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-exists", "allow": [{ "path": "**" }] }
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    "core:window:allow-set-theme",
+    "core:window:allow-start-dragging"
   ]
 }

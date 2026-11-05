@@ -1,8 +1,10 @@
+import { applyNativeTheme, applyResolvedTheme } from "@baigong/fang/glass";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@tauri-apps/api/core";
 /** 应用菜单、冶自检状态与可取消的时间线导出。开发兼容引擎仅显式构建时可选。 */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
-import { Download, Clapperboard } from "lucide-react";
+import { Download, Clapperboard, Moon, Sun } from "lucide-react";
 import { useWorkspace } from "./workspace";
 import { openWorkspaceAssets } from "./WorkspaceChrome";
 import { getWindowAdapter, TitleBar, type MenuEntry } from "@baigong/fang";
@@ -11,6 +13,12 @@ import { exportProject,cancelExport,ExportCancelled } from "../core/export/expor
 import { useRuntimeStore } from "../core/media/runtime";
 
 export function AppTitleBar() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    const theme = dark ? "dark" : "light";
+    applyResolvedTheme(theme);
+    void applyNativeTheme(theme, isTauri() ? value => getCurrentWindow().setTheme(value) : undefined).catch(console.warn);
+  }, [dark]);
   const exporting = useProjectStore((s) => s.exportState.running);
   const engine = useProjectStore((s) => s.exportEngine);
   const legacyEngine = useProjectStore((s)=>s.legacyEngine);
@@ -100,11 +108,14 @@ export function AppTitleBar() {
     <TitleBar
       appName="百工·剪"
       appIcon={<Clapperboard size={15} />}
-      className="workspace-menubar"
-      style={{height:54,zIndex:30}}
+      className="workspace-menubar fang-glass-surface fang-glass-chrome"
+      style={{height:54,zIndex:30,background:undefined}}
       menus={menus}
       actions={
         <>
+          <button type="button" className="icon-btn" aria-label={dark ? "切换浅色主题" : "切换深色主题"} title={dark ? "切换浅色主题" : "切换深色主题"} onClick={() => setDark(!dark)}>
+            {dark ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
           {message && (
             <span
               className={`top-bar__export-msg${message.kind === "error" ? " top-bar__export-msg--error" : ""}`}

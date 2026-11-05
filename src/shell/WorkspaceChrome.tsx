@@ -31,7 +31,7 @@ export function ToolRail() {
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   }, []);
-  return <aside className="tool-rail" aria-label="工具栏">
+  return <aside className="tool-rail fang-glass-surface" aria-label="工具栏">
     <div className="tool-rail__grip">››</div>
     {tools.map(([id, Icon, key]) => <button key={id} type="button" className={tool === id ? "is-active" : ""}
       title={`${TOOL_NAMES[id]} (${key})`} aria-label={`${TOOL_NAMES[id]}工具`} aria-pressed={tool === id}
@@ -57,7 +57,7 @@ export function ToolOptions() {
       useProjectStore.getState().setClipProperty(picked.clip.id, "transform", name, value);
   };
   const Icon = tools.find(([id]) => id === tool)![1];
-  return <div className="tool-options" role="toolbar" aria-label="工具选项">
+  return <div className="tool-options fang-glass-surface" role="toolbar" aria-label="工具选项">
     <span className="tool-options__current"><Icon size={17} /><ChevronDown size={10} /></span>
     <strong>{TOOL_NAMES[tool]}</strong><i />
     <label className="checkbox-option"><input type="checkbox" checked={controls} onChange={(e) => useWorkspace.setState({ controls: e.target.checked })} />显示变换控件</label>
