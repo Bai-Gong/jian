@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Move, Scaling, RotateCw, Hand, ZoomIn, Upload, Maximize, ChevronDown, Film, Music2, LockKeyhole, Volume2, VolumeX, Plus, Trash2, PanelRight, SlidersHorizontal } from "lucide-react";
 import { selectActiveSequence, useProjectStore } from "../core/project/store";
@@ -14,7 +15,6 @@ const tools = [
 ] as const;
 
 export async function openWorkspaceAssets() {
-  useWorkspace.getState().setPanel("assets");
   await importAssets();
 }
 
@@ -86,8 +86,8 @@ export function LayersPanel() {
   const tracks = [...sequence.tracks.filter(t=>t.kind==="video").reverse(), ...sequence.tracks.filter(t=>t.kind==="audio").reverse()].filter((track) => filter === "all" || track.kind === filter);
   const canDelete = sequence.tracks.some(track=>!track.locked && track.clips.some(clip=>selection.includes(clip.id)));
   return <section className="layers-panel" aria-label="图层与轨道">
-    <header className="panel-tabs"><span className="is-active">图层</span><small>{sequence.tracks.length} 个轨道</small><SlidersHorizontal size={13} /></header>
-    <div className="layers-filter"><select aria-label="筛选轨道类型" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部轨道</option><option value="video">视频轨道</option><option value="audio">音频轨道</option></select><span>静态合成</span></div>
+    <header className="panel-tabs"><span className="is-active">轨道</span><small>{sequence.tracks.length} 个轨道</small><SlidersHorizontal size={13} /></header>
+    <div className="layers-filter"><select aria-label="筛选轨道类型" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部轨道</option><option value="video">视频轨道</option><option value="audio">音频轨道</option></select><span>显示与声音</span></div>
     <div className="layers-list">
       {tracks.map((track) => <div className={`layer-track ${track.locked ? "is-locked" : ""}`} key={track.id}>
         <div className="layer-track__heading">{track.kind === "video" ? <Film size={13} /> : <Music2 size={13} />}<strong>{track.name}</strong><span />
@@ -120,7 +120,7 @@ export function WorkspaceStatus() {
   const assets = useProjectStore((s) => s.document.assets.length);
   const runtime = useRuntimeStore((s) => s.info);
   const error = useRuntimeStore((s) => s.error);
-  return <footer className="workspace-status"><span className={error ? "is-error" : ""}>{error || (runtime ? "就绪" : "正在检查媒体能力…")}</span><span>{sequence.width} × {sequence.height} px</span><span>{sequence.fps} fps</span><span>{formatTimecode(sequenceDurationUs(sequence), sequence.fps)}</span><span className="workspace-status__end">{assets} 个素材 · {sequence.tracks.length} 个轨道</span></footer>;
+  return <footer className="workspace-status"><span className={error ? "is-error" : ""}>{!isTauri() ? "界面预览 · 媒体操作请在桌面应用中使用" : error || (runtime ? "就绪" : "正在检查媒体能力…")}</span><span>{sequence.width} × {sequence.height} px</span><span>{sequence.fps} fps</span><span>{formatTimecode(sequenceDurationUs(sequence), sequence.fps)}</span><span className="workspace-status__end">{assets} 个素材 · {sequence.tracks.length} 个轨道</span></footer>;
 }
 
 export function WorkspaceDivider({ direction }: { direction: "horizontal" | "vertical" }) {

@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 /** 应用菜单、冶自检状态与可取消的时间线导出。开发兼容引擎仅显式构建时可选。 */
 import { useCallback, useMemo, useState } from "react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
@@ -86,7 +87,7 @@ export function AppTitleBar() {
       ] },
       { label: "窗口", items: [
         { kind: "item", label: "属性", onSelect: () => useWorkspace.getState().setPanel("properties") },
-        { kind: "item", label: "素材", onSelect: () => useWorkspace.getState().setPanel("assets") },
+        { kind: "item", label: "轨道管理", onSelect: () => useWorkspace.getState().setPanel("tracks") },
         { kind: "separator" },
         { kind: "item", label: "重置工作区", onSelect: () => useWorkspace.getState().reset() },
       ] },
@@ -100,7 +101,7 @@ export function AppTitleBar() {
       appName="百工·剪"
       appIcon={<Clapperboard size={15} />}
       className="workspace-menubar"
-      style={{height:30,zIndex:30}}
+      style={{height:54,zIndex:30}}
       menus={menus}
       actions={
         <>
@@ -124,7 +125,8 @@ export function AppTitleBar() {
             <option value="ye">引擎：ye（冶）</option>
           </select>}
           {phase==="exporting" && (!runtime?.compatFfmpeg || engine==="ye") && <button type="button" className="btn" onClick={()=>{void cancelExport().catch((err)=>setMessage({kind:"error",text:String(err)}));}}>取消导出</button>}
-          {(runtimeError || (!runtime && "冶正在自检…")) && <span role="status">{runtimeError || "冶正在自检…"}</span>}
+          {!isTauri() && <span className="top-bar__preview-note">界面预览</span>}
+          {isTauri() && (runtimeError || (!runtime && "冶正在自检…")) && <span role="status">{runtimeError || "冶正在自检…"}</span>}
           {(engine==="ffmpeg" || legacyEngine==="ffmpeg") && !runtime?.compatFfmpeg && <span title="旧偏好已保留，当前构建使用冶">已切换到冶</span>}
           <button
             type="button"

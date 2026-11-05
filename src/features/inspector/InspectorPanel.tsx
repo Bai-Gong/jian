@@ -94,7 +94,7 @@ export function InspectorPanel() {
         <p className="panel-placeholder">已选中 {selection.length} 个块，请单选一个片段以调整属性。</p>
       ) : (
         <div className="inspector">
-          <p className="panel-placeholder">在画布、图层或时间线中选择片段，调整变换与音频。</p>
+          <p className="panel-placeholder">在画布、轨道管理或时间线中选择片段，调整变换与音频。</p>
           <p className="inspector__section">序列信息</p>
           <dl className="inspector__rows">
             <dt>名称</dt>

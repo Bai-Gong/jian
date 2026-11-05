@@ -6,7 +6,7 @@ export const TOOL_NAMES: Record<CanvasTool, string> = {
 };
 interface WorkspaceState {
   tool: CanvasTool;
-  panel: "properties" | "assets";
+  panel: "properties" | "tracks";
   zoom: number | null;
   canvasScale: number;
   pan: { x: number; y: number };
