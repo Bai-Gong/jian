@@ -16,6 +16,7 @@ export function ProjectLifecycle() {
   const dialog = useRef<HTMLDialogElement>(null);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const closing = useRef(false);
+  const hasProject = useProjectSession(s => s.hasProject);
   const path = useProjectSession(s => s.path);
   const dirty = useProjectSession(s => s.dirty);
   const error = useProjectSession(s => s.error);
@@ -44,10 +45,10 @@ export function ProjectLifecycle() {
   }, [prompt]);
 
   useEffect(() => {
-    const title = `${dirty ? "● " : ""}${projectDisplayName(path, name)} — 百工·剪`;
+    const title = hasProject ? `${dirty ? "● " : ""}${projectDisplayName(path, name)} — 百工·剪` : "项目选择 — 百工·剪";
     document.title = title;
     if (isTauri()) void getCurrentWindow().setTitle(title).catch(console.warn);
-  }, [path, name, dirty]);
+  }, [path, name, dirty, hasProject]);
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {

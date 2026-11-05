@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { createInitialDocument } from "./factory";
 import { PROJECT_EXTENSION } from "./projectFile";
 import { readProjectFile, writeProjectFile } from "./projectFileIO";
+import { recordRecentProject } from "./recentProjects";
 import { useProjectStore } from "./store";
 import type { ProjectDocument } from "./types";
 
@@ -14,6 +15,8 @@ export interface UnsavedChangesContext { name: string; path: string | null }
 type UnsavedChangesPrompt = (context: UnsavedChangesContext) => Promise<UnsavedChangesChoice>;
 
 export interface ProjectSessionState {
+  /** 当前是否已打开工程。启动时始终为 false，不持久化。 */
+  hasProject: boolean;
   path: string | null;
   dirty: boolean;
   busy: boolean;
@@ -22,8 +25,9 @@ export interface ProjectSessionState {
   exporting: boolean;
   /** 仅工程切换递增，供工作区复位组件本地状态。 */
   generation: number;
-  newProject(): Promise<boolean>;
-  openProject(): Promise<boolean>;
+  newProject(name?: string): Promise<boolean>;
+  openProject(path?: string): Promise<boolean>;
+  returnToProjects(): Promise<boolean>;
   saveProject(saveAs?: boolean): Promise<boolean>;
   /** 原生关闭回调也保持 busy，直到窗口销毁请求完成。 */
   confirmClose(onConfirmed?: () => Promise<void>): Promise<boolean>;
@@ -50,7 +54,7 @@ export function registerProjectSwitchHook(callback: () => void): () => void {
 /** 导入对话框与异步探测共同持有锁，避免旧素材落入新工程。 */
 export function beginProjectImport(): (() => void) | null {
   const session = useProjectSession.getState();
-  if (session.busy) return null;
+  if (!session.hasProject || session.busy) return null;
   useProjectSession.setState({ importing: session.importing + 1 });
   let released = false;
   return () => {
@@ -63,7 +67,7 @@ export function beginProjectImport(): (() => void) | null {
 /** 从导出路径对话框开始锁住工程切换，直到导出结束或取消。 */
 export function beginProjectExport(): (() => void) | null {
   const session = useProjectSession.getState();
-  if (session.busy || session.exporting || useProjectStore.getState().exportState.running) return null;
+  if (!session.hasProject || session.busy || session.exporting || useProjectStore.getState().exportState.running) return null;
   useProjectSession.setState({ exporting: true });
   let released = false;
   return () => {
@@ -100,6 +104,7 @@ async function perform(operation: () => Promise<boolean>): Promise<boolean> {
 }
 
 async function saveCurrent(saveAs = false): Promise<boolean> {
+  if (!useProjectSession.getState().hasProject) return false;
   desktopRequired();
   let path = useProjectSession.getState().path;
   if (saveAs || path === null) {
@@ -128,12 +133,13 @@ async function saveCurrent(saveAs = false): Promise<boolean> {
     useProjectStore.setState({ document: snapshot });
   }
   useProjectSession.setState({ path, dirty: useProjectStore.getState().document !== snapshot });
+  recordRecentProject(path, snapshot.name);
   return true;
 }
 
 async function approveLeaving(): Promise<ProjectDocument | null> {
   const document = useProjectStore.getState().document;
-  if (!useProjectSession.getState().dirty) return document;
+  if (!useProjectSession.getState().hasProject || !useProjectSession.getState().dirty) return document;
   const choice = await promptUnsaved({ name: document.name, path: useProjectSession.getState().path });
   if (choice === "cancel") return null;
   if (choice === "save") {
@@ -146,16 +152,17 @@ async function approveLeaving(): Promise<ProjectDocument | null> {
   return document;
 }
 
-function replaceProject(document: ProjectDocument, path: string | null, approved: ProjectDocument): void {
+function replaceProject(document: ProjectDocument, path: string | null, approved: ProjectDocument, hasProject = true): void {
   ensureIdle();
   if (useProjectStore.getState().document !== approved) throw new Error("工程有新的修改，已取消切换，请重试");
   for (const hook of switchHooks) hook();
   savedDocument = document;
   useProjectStore.getState().replaceDocument(document);
-  useProjectSession.setState((s) => ({ path, dirty: false, generation: s.generation + 1 }));
+  useProjectSession.setState((s) => ({ hasProject, path, dirty: false, generation: s.generation + 1 }));
 }
 
 export const useProjectSession = create<ProjectSessionState>(() => ({
+  hasProject: false,
   path: null,
   dirty: false,
   busy: false,
@@ -165,15 +172,17 @@ export const useProjectSession = create<ProjectSessionState>(() => ({
   generation: 0,
   clearError: () => useProjectSession.setState({ error: null }),
   saveProject: (saveAs = false) => perform(() => saveCurrent(saveAs)),
-  newProject: () => perform(async () => {
+  newProject: (name) => perform(async () => {
     const approved = await approveLeaving();
     if (approved === null) return false;
-    replaceProject(createInitialDocument(), null, approved);
+    const document = createInitialDocument();
+    if (name?.trim()) document.name = name.trim();
+    replaceProject(document, null, approved);
     return true;
   }),
-  openProject: () => perform(async () => {
+  openProject: (path) => perform(async () => {
     desktopRequired();
-    const selected = await open({ title: "打开工程", multiple: false, directory: false, filters });
+    const selected = path ?? await open({ title: "打开工程", multiple: false, directory: false, filters });
     if (typeof selected !== "string") return false;
     // 先读取并校验，坏文件不会要求用户放弃当前工作。
     const beforeRead = useProjectStore.getState().document;
@@ -182,6 +191,13 @@ export const useProjectSession = create<ProjectSessionState>(() => ({
     const approved = await approveLeaving();
     if (approved === null) return false;
     replaceProject(document, selected, approved);
+    recordRecentProject(selected, document.name);
+    return true;
+  }),
+  returnToProjects: () => perform(async () => {
+    const approved = await approveLeaving();
+    if (approved === null) return false;
+    replaceProject(createInitialDocument(), null, approved, false);
     return true;
   }),
   confirmClose: (onConfirmed) => perform(async () => {
@@ -195,5 +211,5 @@ export const useProjectSession = create<ProjectSessionState>(() => ({
 }));
 
 useProjectStore.subscribe((state) => state.document, (document) => {
-  useProjectSession.setState({ dirty: document !== savedDocument });
+  useProjectSession.setState((session) => ({ dirty: session.hasProject && document !== savedDocument }));
 });

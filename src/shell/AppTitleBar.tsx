@@ -21,6 +21,7 @@ export function AppTitleBar() {
     applyResolvedTheme(theme);
     void applyNativeTheme(theme, isTauri() ? value => getCurrentWindow().setTheme(value) : undefined).catch(console.warn);
   }, [dark]);
+  const hasProject = useProjectSession(s => s.hasProject);
   const projectBusy = useProjectSession(s => s.busy);
   const importing = useProjectSession(s => s.importing);
   const exportPending = useProjectSession(s => s.exporting);
@@ -84,6 +85,8 @@ export function AppTitleBar() {
           { kind: "item", label: "导出 MP4…", disabled: projectBusy || exportPending || exporting || importing > 0 || !runtime, onSelect: () => void onExport() },
           { kind: "item", label: "取消导出", disabled: !exporting || (runtime?.compatFfmpeg && engine !== "ye"), onSelect: () => { void cancelExport().catch(err => setMessage({kind:"error",text:String(err)})); } },
           { kind: "separator" },
+          { kind: "item", label: "返回项目选择", disabled: !hasProject || projectBusy || exporting || exportPending || importing > 0, onSelect: () => void useProjectSession.getState().returnToProjects() },
+          { kind: "separator" },
           { kind: "item", label: "退出", onSelect: () => void getWindowAdapter()?.close() },
         ],
       },
@@ -112,12 +115,17 @@ export function AppTitleBar() {
       ] },
       { label: "帮助", items: [{ kind: "item", label: "关于 百工·剪", onSelect: onAbout }] },
     ],
-    [onExport, onAbout, projectBusy, exporting, exportPending, importing, runtime, engine],
+    [onExport, onAbout, projectBusy, exporting, exportPending, importing, runtime, engine, hasProject],
   );
 
-  const effectiveMenus = useMemo(() => projectBusy
-    ? menus.map(menu => ({ ...menu, items: menu.items.map(item => item.kind === "item" ? { ...item, disabled: true } : item) }))
-    : menus, [menus, projectBusy]);
+  const effectiveMenus = useMemo(() => menus.map(menu => ({
+    ...menu,
+    items: menu.items.map(item => {
+      if (item.kind !== "item") return item;
+      const availableWithoutProject = menu.label === "帮助" || ["新建项目", "打开项目…", "退出"].includes(item.label);
+      return { ...item, disabled: item.disabled || projectBusy || (!hasProject && !availableWithoutProject) };
+    }),
+  })), [menus, projectBusy, hasProject]);
   const nativeMenuReady = useNativeMenu(effectiveMenus, () => setMessage({ kind: "error", text: "系统菜单不可用，已切换为窗口菜单" }));
 
   return (
@@ -140,7 +148,7 @@ export function AppTitleBar() {
               {message.text}
             </span>
           )}
-          {runtime?.compatFfmpeg && <select
+          {hasProject && runtime?.compatFfmpeg && <select
             className="top-bar__engine"
             value={runtime?.compatFfmpeg ? engine : "ye"}
             onChange={(e) => setEngine(e.target.value as "ffmpeg" | "ye")}
@@ -153,8 +161,8 @@ export function AppTitleBar() {
           </select>}
           {phase === "exporting" && <span role="status" className="top-bar__export-msg">{exporting ? `导出中 ${percent}%` : "选择导出位置…"}</span>}
           {!isTauri() && <span className="top-bar__preview-note">界面预览</span>}
-          {isTauri() && (runtimeError || (!runtime && "冶正在自检…")) && <span role="status">{runtimeError || "冶正在自检…"}</span>}
-          {(engine==="ffmpeg" || legacyEngine==="ffmpeg") && !runtime?.compatFfmpeg && <span title="旧偏好已保留，当前构建使用冶">已切换到冶</span>}
+          {hasProject && isTauri() && (runtimeError || (!runtime && "冶正在自检…")) && <span role="status">{runtimeError || "冶正在自检…"}</span>}
+          {hasProject && (engine==="ffmpeg" || legacyEngine==="ffmpeg") && !runtime?.compatFfmpeg && <span title="旧偏好已保留，当前构建使用冶">已切换到冶</span>}
 
         </>
       }

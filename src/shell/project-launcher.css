@@ -1,0 +1,37 @@
+.project-launcher { flex: 1; min-height: 0; overflow: auto; padding: clamp(28px, 6vh, 64px) 40px 28px; }
+.project-launcher__content { width: 100%; max-width: 940px; margin: 0 auto; }
+.project-launcher__heading { position: relative; padding-left: 76px; margin-bottom: 34px; }
+.project-launcher__mark { position: absolute; left: 0; top: 7px; display: grid; place-items: center; width: 56px; height: 64px; border: 1px solid var(--glass-edge); border-radius: 17px; background: var(--glass); color: var(--fang-color-accent); box-shadow: var(--glass-shadow); }
+.project-launcher__eyebrow { margin: 0 0 9px; font-size: 11px; color: var(--fang-color-text-muted); letter-spacing: 3px; }
+.project-launcher h1 { margin: 0; font-size: 30px; font-weight: 550; letter-spacing: -.5px; }
+.project-launcher__heading > p:last-child { margin: 12px 0 0; color: var(--fang-color-text-secondary); font-size: 13px; }
+.project-launcher__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 40px; }
+.project-launcher__action { display: flex; align-items: center; gap: 18px; padding: 26px; text-align: left; color: var(--fang-color-text); border: 1px solid var(--glass-edge); border-radius: 16px; box-shadow: var(--glass-shadow); cursor: pointer; }
+.project-launcher__action:hover:not(:disabled) { border-color: var(--fang-color-accent); background: var(--fang-glass-soft); }
+.project-launcher__action-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: 12px; background: var(--fang-glass-soft); color: var(--fang-color-accent); }
+.project-launcher__action > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.project-launcher__action strong { font-size: 15px; font-weight: 550; }
+.project-launcher__action small { color: var(--fang-color-text-secondary); font-size: 11px; }
+.project-launcher__action > svg { color: var(--fang-color-text-muted); }
+.project-launcher button:disabled { opacity: .5; cursor: default; }
+.project-launcher__recent > header { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 14px; }
+.project-launcher h2 { font-size: 14px; font-weight: 550; margin: 0; }
+.project-launcher__recent > header > span { font-size: 11px; color: var(--fang-color-text-muted); }
+.project-launcher__list { border: 1px solid var(--glass-edge); border-radius: 16px; overflow: hidden; box-shadow: var(--glass-shadow); }
+.project-launcher__empty { min-height: 210px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; color: var(--fang-color-text-muted); }
+.project-launcher__empty strong { color: var(--fang-color-text-secondary); font-size: 13px; font-weight: 500; }
+.project-launcher__empty p { margin: 0; font-size: 11px; }
+.project-launcher__row { display: flex; align-items: center; padding-right: 16px; }
+.project-launcher__row + .project-launcher__row { border-top: 1px solid var(--fang-color-border); }
+.project-launcher__row:hover { background: var(--fang-color-hover); }
+.project-launcher__open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 16px; padding: 19px 22px; text-align: left; border: none; background: none; color: var(--fang-color-text); cursor: pointer; }
+.project-launcher__file { color: var(--fang-color-accent); display: grid; place-items: center; width: 36px; height: 40px; border-radius: 9px; background: var(--fang-glass-soft); flex: none; }
+.project-launcher__identity { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 7px; }
+.project-launcher__identity strong, .project-launcher__identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-launcher__identity strong { font-size: 12px; font-weight: 550; }
+.project-launcher__identity small { color: var(--fang-color-text-muted); font-size: 10px; }
+.project-launcher__open time { font-size: 10px; color: var(--fang-color-text-muted); flex: none; }
+.project-launcher__remove { width: 28px; height: 28px; display: grid; place-items: center; flex: none; border: none; border-radius: 7px; background: none; color: var(--fang-color-text-muted); cursor: pointer; }
+.project-launcher__remove:hover { color: var(--fang-color-text); background: var(--glass); }
+.project-launcher__footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; color: var(--fang-color-text-muted); font-size: 10px; }
+@media(max-width: 700px) { .project-launcher { padding: 26px 18px; }.project-launcher__actions { grid-template-columns: 1fr; gap: 12px; }.project-launcher__open time { display: none; }.project-launcher h1 { font-size: 24px; } }

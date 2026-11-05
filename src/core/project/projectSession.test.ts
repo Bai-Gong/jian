@@ -21,9 +21,11 @@ import {
   setUnsavedChangesPrompt, useProjectSession,
 } from "./projectSession";
 import { useProjectStore } from "./store";
+import { RECENT_PROJECTS_STORAGE_KEY, useRecentProjects } from "./recentProjects";
 
 const session = () => useProjectSession.getState();
 const project = () => useProjectStore.getState();
+const startupSession = { hasProject: session().hasProject, path: session().path, dirty: session().dirty };
 function edit() { project().addTrack("video"); }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -42,9 +44,120 @@ beforeEach(async () => {
   mocks.read.mockImplementation(async () => createInitialDocument());
   mocks.write.mockResolvedValue(undefined);
   useProjectSession.setState({ busy: false, importing: 0, exporting: false });
+  useRecentProjects.setState({ recentProjects: [] });
+  localStorage.removeItem(RECENT_PROJECTS_STORAGE_KEY);
   project().setExportState({ running: false });
   setUnsavedChangesPrompt(async () => "discard");
   await session().newProject();
+});
+
+describe("project launcher lifecycle", () => {
+  it("always starts on the launcher with no active project", () => {
+    expect(startupSession).toEqual({ hasProject: false, path: null, dirty: false });
+  });
+
+  it("keeps the launcher open after canceled or failed open and rejects project-only operations", async () => {
+    await session().returnToProjects();
+    expect(session()).toMatchObject({ hasProject: false, path: null, dirty: false });
+    const prompt = vi.fn(async () => "cancel" as const);
+    setUnsavedChangesPrompt(prompt);
+    edit();
+    const placeholder = project().document;
+    expect(session().dirty).toBe(false);
+    expect(beginProjectImport()).toBeNull();
+    expect(beginProjectExport()).toBeNull();
+    expect(await session().saveProject()).toBe(false);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(await session().confirmClose()).toBe(true);
+    expect(prompt).not.toHaveBeenCalled();
+    mocks.open.mockResolvedValueOnce(null);
+    expect(await session().openProject()).toBe(false);
+    expect(session().hasProject).toBe(false);
+    mocks.read.mockRejectedValueOnce(new Error("文件不存在"));
+    expect(await session().openProject("/missing.jian")).toBe(false);
+    expect(session()).toMatchObject({ hasProject: false, error: "文件不存在" });
+    expect(project().document).toBe(placeholder);
+    expect(useRecentProjects.getState().recentProjects).toEqual([]);
+  });
+
+  it("enters a named empty project without adding an unsaved entry to recent projects", async () => {
+    await session().returnToProjects();
+    expect(await session().newProject("  新片  ")).toBe(true);
+    expect(session()).toMatchObject({ hasProject: true, dirty: false, path: null });
+    expect(project().document).toMatchObject({ name: "新片", assets: [] });
+    expect(useRecentProjects.getState().recentProjects).toEqual([]);
+    expect(await session().saveProject()).toBe(true);
+    expect(useRecentProjects.getState().recentProjects).toEqual([
+      { path: "/projects/saved.jian", name: "saved", lastOpenedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("keeps the browser launcher visible when native open is unavailable", async () => {
+    await session().returnToProjects();
+    mocks.desktop.mockReturnValue(false);
+    expect(await session().openProject()).toBe(false);
+    expect(session()).toMatchObject({ hasProject: false, path: null, dirty: false });
+    expect(session().error).toContain("桌面应用");
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("records a filename fallback when a valid opened document has no name", async () => {
+    await session().returnToProjects();
+    mocks.read.mockResolvedValueOnce({ ...createInitialDocument(), name: "" });
+    expect(await session().openProject("/projects/unnamed.jian")).toBe(true);
+    expect(useRecentProjects.getState().recentProjects[0]).toMatchObject({ path: "/projects/unnamed.jian", name: "unnamed" });
+  });
+
+  it("returns to the launcher only after approval and resets workspace playback state", async () => {
+    edit();
+    project().setSelection(["old"]);
+    project().setPlayhead(999);
+    project().setPlaying(true);
+    const current = project().document;
+    const hook = vi.fn();
+    const release = registerProjectSwitchHook(hook);
+    setUnsavedChangesPrompt(async () => "cancel");
+    expect(await session().returnToProjects()).toBe(false);
+    expect(session().hasProject).toBe(true);
+    expect(project().document).toBe(current);
+    expect(hook).not.toHaveBeenCalled();
+    setUnsavedChangesPrompt(async () => "save");
+    mocks.write.mockRejectedValueOnce(new Error("保存失败"));
+    expect(await session().returnToProjects()).toBe(false);
+    expect(session().hasProject).toBe(true);
+    expect(hook).not.toHaveBeenCalled();
+    setUnsavedChangesPrompt(async () => "discard");
+    const generation = session().generation;
+    expect(await session().returnToProjects()).toBe(true);
+    release();
+    expect(hook).toHaveBeenCalledTimes(1);
+    expect(session()).toMatchObject({ hasProject: false, path: null, dirty: false, generation: generation + 1 });
+    expect(project()).toMatchObject({ selection: [], playheadUs: 0, isPlaying: false });
+    expect(project().document).not.toBe(current);
+  });
+
+  it("opens recent paths without a dialog, records only successful open/save, and never deletes files", async () => {
+    await session().returnToProjects();
+    const loaded = { ...createInitialDocument(), name: "以前的项目" };
+    mocks.read.mockResolvedValueOnce(loaded);
+    expect(await session().openProject("/projects/recent.jian")).toBe(true);
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.read).toHaveBeenLastCalledWith("/projects/recent.jian");
+    expect(session()).toMatchObject({ hasProject: true, path: "/projects/recent.jian" });
+    expect(useRecentProjects.getState().recentProjects[0]).toMatchObject({ path: "/projects/recent.jian", name: "以前的项目" });
+    const recent = useRecentProjects.getState().recentProjects;
+    edit();
+    setUnsavedChangesPrompt(async () => "cancel");
+    expect(await session().openProject("/projects/canceled.jian")).toBe(false);
+    expect(useRecentProjects.getState().recentProjects).toBe(recent);
+    mocks.write.mockRejectedValueOnce(new Error("保存失败"));
+    expect(await session().saveProject()).toBe(false);
+    expect(useRecentProjects.getState().recentProjects).toBe(recent);
+    useRecentProjects.getState().removeRecent("/projects/recent.jian");
+    expect(useRecentProjects.getState().recentProjects).toEqual([]);
+    expect(session().path).toBe("/projects/recent.jian");
+    expect(mocks.write).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("project document lifecycle", () => {
